@@ -8,7 +8,12 @@
 
 This repository serves as a port that provides a Mojo-based implementation of `llama2.c`.
 
-With the release of [Mojo](https://www.modular.com/blog/mojo-its-finally-here), I was inspired to take my Python port of [llama2.py](https://github.com/tairov/llama2.py) and transition it to Mojo. The result? A version that leverages Mojo's SIMD & vectorization primitives, boosting the Python performance by nearly 250x. Impressively, the Mojo version now outperforms the original llama2.c, even in runfast mode, by 15-20%. This showcases the potential of hardware-level optimizations through Mojo's advanced features. I think this also can help us to see how far can we go with the original llama2.c hardware optimizations.
+With the release of [Mojo](https://www.modular.com/blog/mojo-its-finally-here), I was inspired to take my Python port
+of [llama2.py](https://github.com/tairov/llama2.py) and transition it to Mojo. The result? A version that leverages
+Mojo's SIMD & vectorization primitives, boosting the Python performance by nearly 250x. Impressively, the Mojo version
+now outperforms the original llama2.c, even in runfast mode, by 15-20%. This showcases the potential of hardware-level
+optimizations through Mojo's advanced features. I think this also can help us to see how far can we go with the original
+llama2.c hardware optimizations.
 
 ## performance
 
@@ -16,10 +21,10 @@ As it was shown during my experimentations performance of this solution can beat
 with `runfast` option
 Ubuntu virtual machine performance:
 
-| Model           | llama2.py | llama2.c    | llama2.c (runfast) | **llama2.mojo** | llama2.mojo (naive matmul) |
-|-----------------|-----------|-------------|--------------------|-----------------|----------------------------|
-| stories15M.bin  | 1.3 tok/s | 75.73 tok/s | 237 tok/s          | 260 tok/s       | 67.26 tok/s                | 
-| stories110M.bin | -         | 9 tok/s     | 30 tok/s           | 40 tok/s        | 9.20                       | 
+| Model           | [llama2.py](https://github.com/tairov/llama2.py) | [llama2.c](https://github.com/karpathy/llama2.c) | [llama2.c](https://github.com/karpathy/llama2.c) (runfast) | **llama2.mojo** | llama2.mojo (naive matmul) |
+|-----------------|--------------------------------------------------|--------------------------------------------------|------------------------------------------------------------|-----------------|----------------------------|
+| stories15M.bin  | 1.3 tok/s                                        | 75.73 tok/s                                      | 237 tok/s                                                  | 260 tok/s       | 67.26 tok/s                | 
+| stories110M.bin | -                                                | 9 tok/s                                          | 30 tok/s                                                   | 40 tok/s        | 9.20                       | 
 
 ## prerequisites
 
