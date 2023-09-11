@@ -690,7 +690,7 @@ fn time_in_ms() -> Int:
 
 fn main() raises:
     print("num hardware threads: ", num_cores(), " SIMD vector width: ", nelts)
-    let checkpoint = "model.bin"
+    let checkpoint = "stories15M.bin"
     # let checkpoint = "stories110M.bin"
     let tokenizer = "tokenizer.bin"
     let temperature = 0.8
