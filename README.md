@@ -8,8 +8,8 @@
 
 This repository serves as a fork that provides a Mojo-based implementation of `llama2.c`.
 
-As it was shown during my experimentations performance of this solution can bean original `llama2.c` even built
-with `runfast` mode
+As it was shown during my experimentations performance of this solution can beat the original `llama2.c` even built
+with `runfast` option
 Ubuntu virtual machine performance:
 
 | Model           | llama2.py | llama2.c    | llama2.c (runfast) | **llama2.mojo** |
