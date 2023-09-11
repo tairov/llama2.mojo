@@ -19,7 +19,16 @@ llama2.c hardware optimizations.
 
 As it was shown during my experimentations performance of this solution can beat the original `llama2.c` even built
 with `runfast` option
-Ubuntu virtual machine performance:
+
+### Performance comparison
+
+#### OS/HW specs 
+```
+OS:         Ubuntu 20.04
+CPU(s):     6
+Model name: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz
+CPU MHz:    3191.998
+```
 
 | Model           | [llama2.py](https://github.com/tairov/llama2.py) | [llama2.c](https://github.com/karpathy/llama2.c) | [llama2.c](https://github.com/karpathy/llama2.c) (runfast) | **llama2.mojo** | llama2.mojo (naive matmul) |
 |-----------------|--------------------------------------------------|--------------------------------------------------|------------------------------------------------------------|-----------------|----------------------------|
