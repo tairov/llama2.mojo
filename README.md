@@ -4,25 +4,25 @@
   <img src="assets/llama2.mojo-demo.gif" width="700" alt="llama2.mojo logo">
 </p>
 
-## why this fork?
+## why this port?
 
-This repository serves as a fork that provides a Mojo-based implementation of `llama2.c`.
+This repository serves as a port that provides a Mojo-based implementation of `llama2.c`.
 
 As it was shown during my experimentations performance of this solution can beat the original `llama2.c` even built
 with `runfast` option
 Ubuntu virtual machine performance:
 
-| Model           | llama2.py | llama2.c    | llama2.c (runfast) | **llama2.mojo** |
-|-----------------|-----------|-------------|--------------------|-----------------|
-| stories15M.bin  | 1.3 tok/s | 75.73 tok/s | 237 tok/s          | 260 tok/s       |
-| stories110M.bin | -         | 9 tok/s     | 30 tok/s           | 40 tok/s        |
+| Model           | llama2.py | llama2.c    | llama2.c (runfast) | **llama2.mojo** | llama2.mojo (naive matmul) |
+|-----------------|-----------|-------------|--------------------|-----------------|----------------------------|
+| stories15M.bin  | 1.3 tok/s | 75.73 tok/s | 237 tok/s          | 260 tok/s       | 67.26 tok/s                | 
+| stories110M.bin | -         | 9 tok/s     | 30 tok/s           | 40 tok/s        | 9.20                       | 
 
 ## prerequisites
 
 Make sure you have installed & configured mojo on your environment.
 https://docs.modular.com/mojo/manual/get-started/index.html
 
-Or you can use [mojo playground](https://playground.modular.com/) to run this model. 
+Or you can use [mojo playground](https://playground.modular.com/) to run this model.
 
 ## feel the 🔥magic
 
@@ -38,7 +38,7 @@ Then, open the repository folder:
 cd llama2.mojo
 ```
 
-Now, let's just run a baby Llama 2 model on Mojo 
+Now, let's just run a baby Llama 2 model on Mojo
 
 ```bash
 wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
