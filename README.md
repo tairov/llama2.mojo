@@ -18,7 +18,9 @@ llama2.c hardware optimizations.
 ## performance
 
 As it was shown during my experimentations performance of this solution can beat the original `llama2.c` even built
-with `runfast` option
+with `runfast` option. 
+
+PS. I was trying to make parallelize mode in Mojo working, but that version was much slower. Though, the `llama2.c` built with OMP support can be 2x faster. Still investigating in this direction.
 
 ### Performance comparison
 
