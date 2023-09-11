@@ -464,19 +464,15 @@ fn matmul_naive(C: Matrix, x: Matrix, w: Matrix) -> None:
 
 
 fn matmul_vectorized(C: Matrix, A: Matrix, B: Matrix):
-    var T = BufferPtrFloat32.alloc(nelts)
-    var Tbuf = Buffer[nelts, DType.float32](T)
     for i in range(0, B.rows):
-        memset_zero(T, nelts)
+        var tmp = SIMD[DType.float32, nelts](0)
 
         @parameter
-        fn dot[nelts: Int](j: Int):
-            T.simd_store[nelts](
-                0, T.simd_load[nelts](0) + A.load[nelts](j) * B.load[nelts](i, j)
-            )
+        fn dot[_nelts: Int](j: Int):
+            tmp += A.load[nelts](j) * B.load[nelts](i, j)
 
         vectorize[nelts, dot](B.cols)
-        C[i] = sum[nelts, DType.float32](Tbuf)
+        C[i] = tmp.reduce_add()
 
 
 fn matmul_parallelized(C: Matrix, A: Matrix, B: Matrix):
