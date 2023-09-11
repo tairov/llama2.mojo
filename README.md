@@ -28,7 +28,7 @@ https://docs.modular.com/mojo/manual/get-started/index.html
 
 Or you can use [mojo playground](https://playground.modular.com/) to run this model.
 
-## feel the 🔥magic
+## feel the 🔥 magic
 
 First, navigate to the folder when you keep your projects and clone this repository to this folder:
 
@@ -42,13 +42,13 @@ Then, open the repository folder:
 cd llama2.mojo
 ```
 
-Now, let's just run a baby Llama 2 model on Mojo
+Now, let's download the model
 
 ```bash
 wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
 ```
 
-Just run the Mojo
+Then, just run the Mojo
 
 ```bash
 mojo llama2.mojo
