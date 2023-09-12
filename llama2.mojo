@@ -289,7 +289,6 @@ struct RunState:
 
 struct TransformerWeights:
     var token_embedding_table: Matrix
-    # = BufferPtrFloat32.alloc(rows * cols)
     var freq_cis_real: Matrix
     var freq_cis_imag: Matrix
     var rms_att_weight: Matrix
@@ -344,7 +343,6 @@ struct TransformerWeights:
         self.freq_cis_imag.set_buf_ptr(
             buf.bitcast_offset_float32(self.freq_cis_imag.size())
         )
-        # read_floats( (file_size - file.tell()) // 4 )
         self.wcls = Matrix(
             config.vocab_size, config.dim
         )  # if shared_weights else rest_floats
@@ -389,7 +387,7 @@ fn tokenizer_init(inout tok: Tokenizer, inout buf: FileBuf) -> None:
     tok.vocab_scores = BufferPtrFloat32.alloc(tok.vocab_size)
     tok.vocab = PointerStrings.alloc(tok.vocab_size)
 
-    # read vocab_scores & vocab balues (tokens)
+    # read vocab_scores & vocab values (tokens)
     for i in range(0, tok.vocab_size):
         tok.vocab_scores.simd_store[1](i, read_val_float32(buf))
         let slen = read_val_int(buf)
@@ -503,7 +501,6 @@ fn transformer(
 
     # Copy the token embedding into x
     let content_row = weights.token_embedding_table.data.offset(token * dim)
-    # memcpy[type: DType](dest: DTypePointer[type], src: DTypePointer[type], count: Int)
     memcpy[DType.float32](x, content_row, config.dim)
 
     # Pluck out the "pos" row of freq_cis_real and freq_cis_imag
@@ -706,11 +703,6 @@ fn main() raises:
     # Create and initialize the application RunState
     var state = RunState(config)
 
-    # # Process the prompt, if any
-    # var prompt_tokens = []
-    # if prompt != "":
-    #     prompt_tokens = bpe_encode(prompt, vocab, vocab_scores)
-
     # Start the main loop
     var start = 0  # Used to time our code, only initialized after the first iteration
     var next_token = 0  # Will store the next token in the sequence
@@ -724,12 +716,6 @@ fn main() raises:
     while pos < steps:
         # Forward the transformer to get logits for the next token
         transformer(token, pos, config, state, weights)
-
-        # if pos < len(prompt_tokens):
-        #     # If we are still processing the input prompt, force the next prompt token
-        #     # next_token = prompt_tokens[pos]
-        #     pass
-        # else:
 
         # Sample the next token
         if temperature == 0.0:
