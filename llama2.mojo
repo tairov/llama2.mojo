@@ -1,14 +1,11 @@
 from math import round
 import math
 
-from benchmark import Benchmark
 from memory import memset_zero, memcpy
 from memory.unsafe import DTypePointer
 from random import rand
 from sys.info import simdwidthof
-from runtime.llcl import Runtime
 from builtin import string
-import sys
 import time
 import random
 import os
@@ -19,7 +16,6 @@ from read import BufReader, File
 from memory.buffer import Buffer
 
 from python import Python
-from utils.vector import DynamicVector
 
 # The SIMD vector width.
 from algorithm import vectorize, parallelize
