@@ -665,13 +665,14 @@ fn time_in_ms() -> Int:
 
 
 fn main() raises:
+    let os = Python.import_module("os")
     print("num hardware threads: ", num_cores(), " SIMD vector width: ", nelts)
     let checkpoint = "stories15M.bin"
     # let checkpoint = "stories110M.bin"
     let tokenizer = "tokenizer.bin"
     let temperature = 0.0
     var steps = 256
-    let prompt = ""
+    let prompt = os.environ.get('PROMPT', "")
     let rng_seed: Int = time.now()
     random.seed(rng_seed)
     var fbuf: FileBuf = FileBuf()
