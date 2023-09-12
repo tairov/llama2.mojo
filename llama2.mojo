@@ -446,21 +446,6 @@ fn matmul_naive(C: Matrix, x: Matrix, w: Matrix) -> None:
             C[i] += x[j] * w[i, j]
 
 
-fn matmul_vectorized(C: Matrix, A: Matrix, B: Matrix):
-    for i in range(0, B.rows):
-        var tmp = SIMD[DType.float32, nelts](0)
-
-        @parameter
-        fn dot[_nelts: Int](j: Int):
-            if _nelts < nelts:  # take care of tail array elements with length <  nelts
-                tmp[0] += (A.load[_nelts](j) * B.load[_nelts](i, j)).reduce_add()
-            else:
-                tmp += A.load[nelts](j) * B.load[nelts](i, j)
-
-        vectorize[nelts, dot](B.cols)
-        C[i] = tmp.reduce_add()
-
-
 fn matmul_parallelized(C: Matrix, A: Matrix, B: Matrix, rt: Runtime):
     @parameter
     fn compute_row(i: Int):
@@ -481,7 +466,6 @@ fn matmul_parallelized(C: Matrix, A: Matrix, B: Matrix, rt: Runtime):
 
 fn matmul(inout C: Matrix, A: Matrix, B: Matrix, rt: Runtime) -> None:
     # B (d,n) @ A (n,) -> C (d,)
-    # matmul_vectorized(C, A, B)
     matmul_parallelized(C, A, B, rt)
 
 
