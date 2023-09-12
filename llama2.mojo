@@ -394,10 +394,6 @@ fn tokenizer_init(inout tok: Tokenizer, inout buf: FileBuf) -> None:
         tok.vocab_scores.simd_store[1](i, read_val_float32(buf))
         let slen = read_val_int(buf)
         tok.vocab.store(i, read_val_str(buf, slen))
-        # if i % 100 == 0:
-        #     for k in range(slen):
-        #         print_no_newline(chr(tok.vocab.load(i).load(k).to_int()))
-        #     print()
 
     tok.vocab_scores = buf.data.offset(buf.offset).bitcast[DType.float32]()
     buf.offset += tok.vocab_size * 4
@@ -543,8 +539,6 @@ fn transformer(
                 let k1 = k.offset(i + 1).simd_load[1](0)
                 let fcr = freq_cis_real_row.offset(i // 2).simd_load[1](0)
                 let fci = freq_cis_imag_row.offset(i // 2).simd_load[1](0)
-                # if i == 0 and math.abs((-0.014037667773663998) - (q0 * fcr - q1 * fci)) < 1e-5:
-                #     print("found change here h,i,q0,q1,fcr,fci", h, i, q0,q1,fcr,fci)
                 q.offset(i).simd_store[1](0, q0 * fcr - q1 * fci)
                 q.offset(i + 1).simd_store[1](0, q0 * fci + q1 * fcr)
                 k.offset(i).simd_store[1](0, k0 * fcr - k1 * fci)
