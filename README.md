@@ -80,6 +80,12 @@ Once upon a time, there was a little girl named Lily. She loved to play outside 
 achieved tok/s:  264.24870466321244
 ```
 
+## Running via Docker
+
+```
+docker build -t llama2.mojo .
+docker run -it llama2.mojo
+```
 ## License
 
 MIT
