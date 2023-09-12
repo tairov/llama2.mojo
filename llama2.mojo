@@ -21,7 +21,7 @@ from python import Python
 from algorithm import vectorize, parallelize
 from algorithm import sum
 
-alias nelts = simdwidthof[DType.float32]()
+alias nelts = (2 * simdwidthof[DType.float32]())
 
 alias PointerString = Pointer[UInt8]
 alias BufferPtrType = DTypePointer[DType.uint8]
@@ -450,7 +450,10 @@ fn matmul_vectorized(C: Matrix, A: Matrix, B: Matrix):
 
         @parameter
         fn dot[_nelts: Int](j: Int):
-            tmp += A.load[nelts](j) * B.load[nelts](i, j)
+            if _nelts < nelts: # take care of tail array elements with length <  nelts
+                tmp[0] += (A.load[_nelts](j) * B.load[_nelts](i, j)).reduce_add()
+            else:
+                tmp += A.load[nelts](j) * B.load[nelts](i, j)
 
         vectorize[nelts, dot](B.cols)
         C[i] = tmp.reduce_add()
