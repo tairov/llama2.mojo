@@ -282,7 +282,7 @@ struct RunState:
         self.key_cache.alloc_zero()
         self.value_cache = Matrix3(config.n_layers, config.seq_len, config.dim)
         self.value_cache.alloc_zero()
-        self.rt = Runtime()
+        self.rt = Runtime(num_cores() // 2)
 
 
 struct TransformerWeights:
