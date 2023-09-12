@@ -2,12 +2,9 @@ from math import round
 import math
 
 from benchmark import Benchmark
-from sys.intrinsics import strided_load
-from utils.list import VariadicList
-from math import div_ceil, min
 from memory import memset_zero, memcpy
 from memory.unsafe import DTypePointer
-from random import rand, random_float64
+from random import rand
 from sys.info import simdwidthof
 from runtime.llcl import Runtime
 from builtin import string
@@ -251,12 +248,10 @@ struct Config:
 
 struct RunState:
     var x: Matrix  # activation at current time stamp (dim,)
-    var yy: Matrix
     var xb: Matrix  # same, but inside a residual branch (dim,)
     var xb2: Matrix  # an additional buffer just for convenience (dim,)
     var hb: Matrix  # buffer for hidden dimension in the ffn (hidden_dim,)
     var hb2: Matrix  # buffer for hidden dimension in the ffn (hidden_dim,)
-    var zz: Matrix
     var q: Matrix  # query (dim,)
     var k: Matrix  # key (dim,)
     var v: Matrix  # value (dim,)
@@ -276,10 +271,6 @@ struct RunState:
         self.hb.alloc_zero()
         self.hb2 = Matrix(config.hidden_dim)
         self.hb2.alloc_zero()
-        self.yy = Matrix(10000)
-        self.yy.alloc_zero()
-        self.zz = Matrix(10000)
-        self.zz.alloc_zero()
         self.q = Matrix(config.dim)
         self.q.alloc_zero()
         self.k = Matrix(config.dim)
@@ -473,7 +464,6 @@ fn matmul_vectorized(C: Matrix, A: Matrix, B: Matrix):
 
         vectorize[nelts, dot](B.cols)
         C[i] = tmp.reduce_add()
-
 
 fn matmul_parallelized(C: Matrix, A: Matrix, B: Matrix):
     @parameter
@@ -689,7 +679,7 @@ fn main() raises:
     let checkpoint = "stories15M.bin"
     # let checkpoint = "stories110M.bin"
     let tokenizer = "tokenizer.bin"
-    let temperature = 0.8
+    let temperature = 0.0
     var steps = 256
     let prompt = ""
     let rng_seed: Int = time.now()
