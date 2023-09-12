@@ -39,7 +39,8 @@ RUN apt-get update \
     jupyterlab \
     ipykernel \
     matplotlib \
-    ipywidgets 
+    ipywidgets \
+    gradio 
 
 RUN curl -fsSL https://repo.anaconda.com/miniconda/Miniconda3-py38_23.5.2-0-Linux-x86_64.sh > /tmp/miniconda.sh \
     && chmod +x /tmp/miniconda.sh \
@@ -57,6 +58,7 @@ RUN chown -R user $MODULAR_HOME
 ENV PATH="$PATH:/opt/conda/bin:$MODULAR_HOME/pkg/packages.modular.com_mojo/bin"
 
 RUN conda init 
+RUN pip install gradio
 
 USER user
 WORKDIR $HOME/app
@@ -64,4 +66,5 @@ WORKDIR $HOME/app
 COPY --chown=user . $HOME/app
 RUN wget -c  https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
 
-CMD ["mojo", "llama2.mojo"]
+# CMD ["mojo", "llama2.mojo"]
+CMD ["python3", "gradio_app.py"]
