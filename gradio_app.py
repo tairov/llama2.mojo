@@ -5,7 +5,7 @@ import os
 
 
 async def generate(prompt):
-    os.environ["PROMPT"] = prompt
+    # os.environ["PROMPT"] = prompt
     # stream stout
     process = subprocess.Popen(
         ["mojo", "llama2.mojo"], stdout=subprocess.PIPE, stderr=subprocess.PIPE
@@ -18,12 +18,11 @@ async def generate(prompt):
         yield text
 
 
-input_prompt = gr.Textbox(label="Input Prompt")
 output_text = gr.Textbox(label="Generated Text")
 
 demo = gr.Interface(
     fn=generate,
-    inputs=input_prompt,
+    inputs=None,
     outputs=output_text,
     description="""
 # llama2.🔥
