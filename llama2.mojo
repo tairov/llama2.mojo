@@ -10,7 +10,7 @@ import time
 import random
 import os
 
-from runtime.llcl import num_cores
+from runtime.llcl import num_cores, Runtime
 
 from read import BufReader, File
 from memory.buffer import Buffer
@@ -255,6 +255,7 @@ struct RunState:
     var logits: Matrix  # output logits
     var key_cache: Matrix3  # (layer, seq_len, dim)
     var value_cache: Matrix3  # (layer, seq_len, dim)
+    var rt: Runtime
 
     fn __init__(inout self, config: Config):
         self.x = Matrix(config.dim)
@@ -281,6 +282,7 @@ struct RunState:
         self.key_cache.alloc_zero()
         self.value_cache = Matrix3(config.n_layers, config.seq_len, config.dim)
         self.value_cache.alloc_zero()
+        self.rt = Runtime()
 
 
 struct TransformerWeights:
@@ -450,7 +452,7 @@ fn matmul_vectorized(C: Matrix, A: Matrix, B: Matrix):
 
         @parameter
         fn dot[_nelts: Int](j: Int):
-            if _nelts < nelts: # take care of tail array elements with length <  nelts
+            if _nelts < nelts:  # take care of tail array elements with length <  nelts
                 tmp[0] += (A.load[_nelts](j) * B.load[_nelts](i, j)).reduce_add()
             else:
                 tmp += A.load[nelts](j) * B.load[nelts](i, j)
@@ -458,28 +460,29 @@ fn matmul_vectorized(C: Matrix, A: Matrix, B: Matrix):
         vectorize[nelts, dot](B.cols)
         C[i] = tmp.reduce_add()
 
-fn matmul_parallelized(C: Matrix, A: Matrix, B: Matrix):
+
+fn matmul_parallelized(C: Matrix, A: Matrix, B: Matrix, rt: Runtime):
     @parameter
-    fn calc_row(i: Int):
-        var T = BufferPtrFloat32.alloc(nelts)
-        var Tbuf = Buffer[nelts, DType.float32](T)
-        memset_zero(T, nelts)
+    fn compute_row(i: Int):
+        var tmp = SIMD[DType.float32, nelts](0)
+
         @parameter
-        fn dot[nelts: Int](j: Int):
-            T.simd_store[nelts](
-                0, T.simd_load[nelts](0) + A.load[nelts](j) * B.load[nelts](i, j)
-            )
+        fn dot[_nelts: Int](j: Int):
+            if _nelts < nelts:  # take care of tail array elements with length <  nelts
+                tmp[0] += (A.load[_nelts](j) * B.load[_nelts](i, j)).reduce_add()
+            else:
+                tmp += A.load[nelts](j) * B.load[nelts](i, j)
 
         vectorize[nelts, dot](B.cols)
-        C[i] = sum[nelts, DType.float32](Tbuf)
+        C[i] = tmp.reduce_add()
 
-    parallelize[calc_row](B.rows)
+    parallelize[compute_row](rt, B.rows, rt.parallelism_level())
 
 
-fn matmul(inout C: Matrix, A: Matrix, B: Matrix) -> None:
+fn matmul(inout C: Matrix, A: Matrix, B: Matrix, rt: Runtime) -> None:
     # B (d,n) @ A (n,) -> C (d,)
-    matmul_vectorized(C, A, B)
-    # matmul_parallelized(C, A, B)
+    # matmul_vectorized(C, A, B)
+    matmul_parallelized(C, A, B, rt)
 
 
 fn transformer(
@@ -513,13 +516,13 @@ fn transformer(
 
         # QKV matmuls for this position
         tmpw.set_buf_ptr(weights.wq.data.offset(l * dim * dim), dim, dim)
-        matmul(state.q, state.xb, tmpw)
+        matmul(state.q, state.xb, tmpw, state.rt)
 
         tmpw.set_buf_ptr(weights.wk.data.offset(l * dim * dim), dim, dim)
-        matmul(state.k, state.xb, tmpw)
+        matmul(state.k, state.xb, tmpw, state.rt)
 
         tmpw.set_buf_ptr(weights.wv.data.offset(l * dim * dim), dim, dim)
-        matmul(state.v, state.xb, tmpw)
+        matmul(state.v, state.xb, tmpw, state.rt)
 
         # Apply RoPE rotation to the q and k vectors for each head
         for h in range(config.n_heads):
@@ -587,7 +590,7 @@ fn transformer(
                     xb.offset(i).simd_store[1](0, xbi)
         # Final matrix multiplication to get the output of the attention
         tmpw.set_buf_ptr(weights.wo.data.offset(l * dim * dim), dim, dim)
-        matmul(state.xb2, state.xb, tmpw)
+        matmul(state.xb2, state.xb, tmpw, state.rt)
 
         # Residual connection back into x
         accum(x, state.xb2.data, dim)
@@ -597,10 +600,10 @@ fn transformer(
 
         # Calculate self.w1(x) and self.w3(x) for FFN
         tmpw.set_buf_ptr(weights.w1.data.offset(l * dim * hidden_dim), hidden_dim, dim)
-        matmul(state.hb, state.xb, tmpw)
+        matmul(state.hb, state.xb, tmpw, state.rt)
 
         tmpw.set_buf_ptr(weights.w3.data.offset(l * dim * hidden_dim), hidden_dim, dim)
-        matmul(state.hb2, state.xb, tmpw)
+        matmul(state.hb2, state.xb, tmpw, state.rt)
 
         # Apply SiLU activation function (silu(x) = x * sigmoid(x))
         for i in range(hidden_dim):
@@ -613,7 +616,7 @@ fn transformer(
 
         # Final matrix multiplication to get the output of the FFN
         tmpw.set_buf_ptr(weights.w2.data.offset(l * dim * hidden_dim), dim, hidden_dim)
-        matmul(state.xb, state.hb, tmpw)
+        matmul(state.xb, state.hb, tmpw, state.rt)
 
         # Residual connection
         accum(x, state.xb.data, dim)
@@ -623,7 +626,7 @@ fn transformer(
 
     # Classifier into logits
     tmpw.set_buf_ptr(weights.wcls.data, config.vocab_size, dim)
-    matmul(state.logits, state.x, tmpw)
+    matmul(state.logits, state.x, tmpw, state.rt)
 
 
 fn argmax(v: Matrix) -> Int:
