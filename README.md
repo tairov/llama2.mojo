@@ -40,7 +40,7 @@ CPU MHz:    3191.998
 ## prerequisites
 
 Make sure you have installed & configured mojo on your environment.
-https://docs.modular.com/mojo/manual/get-started/index.html
+[Get Started](https://docs.modular.com/mojo/manual/get-started/index.html)
 
 Or you can use [mojo playground](https://playground.modular.com/) to run this model.
 
@@ -68,6 +68,11 @@ Then, just run the Mojo
 
 ```bash
 mojo llama2.mojo stories15M.bin -s 100 -n 256 -t 0.5 -i "Llama is an animal"
+```
+
+**Example output**
+
+```
 num hardware threads:  6
 SIMD vector width:  16
 checkpoint size:  60816028
@@ -80,7 +85,7 @@ The puppy barked and said, "Goodbye Mandy! See you tomorrow!"
 Mandy waved goodbye and then she went back home. She was so happy to have a new friend.
 <s>
 Once upon a time, there was a little girl named Lily. She loved to play outside and explore the world around her. One day, she went for a walk in the park with her mommy. They saw a big tree with lots of leaves.
-Lily said, "
+Lily said,
 achieved tok/s:  359.66149506346966
 ```
 
