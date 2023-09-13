@@ -158,6 +158,31 @@ fn read_val_str(inout buf: FileBuf, slen: Int) -> PointerString:
     return str
 
 
+# not optimal concat
+fn str_concat(s1: PointerString, s2: PointerString) -> PointerString:
+    var l1 = 0
+    var l2 = 0
+
+    while s1[l1] != 0:
+        l1 += 1
+    while s2[l2] != 0:
+        l2 += 1
+
+    let str = PointerString.alloc(l1 + l2)
+    memcpy[UInt8](str, s1, l1)
+    memcpy[UInt8](str.offset(l1), s2, l2)
+    str.store(l1 + l2, 0)
+    return str
+
+
+fn str_to_ptr(s: String) -> PointerString:
+    let ret = PointerString.alloc(len(s) + 1)
+    for i in range(len(s)):
+        ret.store(i, ord(s[i]))
+    ret.store(len(s), 0)
+    return ret
+
+
 struct FileBuf:
     var data: BufferPtrType
     var offset: Int
@@ -596,6 +621,59 @@ fn sample(probabilities: Matrix) -> Int:
     return n - 1  # In case of rounding errors
 
 
+fn str_lookup(str: PointerString, tok: Tokenizer) -> Int:
+    for pos in range(tok.vocab_size):
+        let s1 = tok.vocab[pos]
+        var p1 = 0
+        while s1[p1] != 0 and str[p1] != 0:
+            if s1[p1] != str[p1]:
+                break
+            p1 += 1
+        if s1[p1] != 0 or str[p1] != 0:
+            continue
+        return pos
+    return -1
+
+
+fn bpe_encode(inout tokens: DynamicVector[Int], text: String, tok: Tokenizer):
+    for pos in range(len(text)):
+        let char = str_to_ptr(text[pos])
+        let id = str_lookup(char, tok)
+
+        if id == -1:
+            print("Not a good prompt token at pos ", pos)
+            return
+        tokens.push_back(id)
+
+    while True:
+        var best_score = Float32(-1e10)
+        var best_id = -1
+        var best_idx = -1
+
+        for i in range(len(tokens) - 1):
+            # Check if we can merge the pair (tokens[i], tokens[i+1])
+            let str = str_concat(tok.vocab[tokens[i]], tok.vocab[tokens[i + 1]])
+            let id = str_lookup(str, tok)
+            if id != -1 and tok.vocab_scores.load(id) > best_score:
+                best_score = tok.vocab_scores.load(id)
+                best_id = id
+                best_idx = i
+
+        if best_idx == -1:
+            # We couldn't find any more pairs to merge, so we're done
+            break
+
+        # Merge the consecutive pair (best_idx, best_idx+1) into new token best_id
+        tokens[best_idx] = best_id
+        # Delete token at position best_idx+1, shift the entire sequence back 1
+        var _tokens = DynamicVector[Int]()
+        for i in range(0, best_idx + 1):
+            _tokens.push_back(tokens[i])
+        for i in range(best_idx + 2, len(tokens)):
+            _tokens.push_back(tokens[i])
+        tokens = _tokens
+
+
 fn print_str(s: PointerString):
     # print all chars till null character
     var p: Int = 0
@@ -652,6 +730,7 @@ fn main() raises:
                     print("Wrong temperature value", temperature)
                     return 0
         return 1
+
     let res = argparse()
     if res == 0:
         print_usage()
@@ -686,28 +765,39 @@ fn main() raises:
     # Create and initialize the application RunState
     var state = RunState(config)
 
+    # Process the prompt, if any
+    var prompt_tokens = DynamicVector[Int]()
+
+    if prompt:
+        bpe_encode(prompt_tokens, prompt, tok)
+
     # Start the main loop
     var start = 0  # Used to time our code, only initialized after the first iteration
     var next_token = 0  # Will store the next token in the sequence
     # Initialize with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
     var token = 1
-    var pos = 0  # Position in the sequence
+
+    # Position in the sequence
+    var pos = 0
     while pos < steps:
         # Forward the transformer to get logits for the next token
         transformer(token, pos, config, state, weights)
 
-        # Sample the next token
-        if temperature == 0.0:
-            # Greedy argmax sampling: take the token with the highest probability
-            next_token = argmax(state.logits)
+        if pos < len(prompt_tokens):
+            next_token = prompt_tokens[pos]
         else:
-            # Apply the temperature to the logits
-            for q in range(config.vocab_size):
-                state.logits[q] = state.logits[q] / temperature
-            # Apply softmax to the logits to get the probabilities for the next token
-            softmax(state.logits.data, config.vocab_size)
-            # Sample from this distribution to get the next token
-            next_token = sample(state.logits)
+            # Sample the next token
+            if temperature == 0.0:
+                # Greedy argmax sampling: take the token with the highest probability
+                next_token = argmax(state.logits)
+            else:
+                # Apply the temperature to the logits
+                for q in range(config.vocab_size):
+                    state.logits[q] = state.logits[q] / temperature
+                # Apply softmax to the logits to get the probabilities for the next token
+                softmax(state.logits.data, config.vocab_size)
+                # Sample from this distribution to get the next token
+                next_token = sample(state.logits)
 
         var token_str: PointerString = tok.vocab[next_token]
         if token == 1 and token_str[0] == ord(" "):
