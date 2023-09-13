@@ -689,6 +689,12 @@ fn time_in_ms() -> Int:
 
 fn print_usage():
     print("Usage: mojo llama2.mojo <checkpoint> [options]")
+    print("Example: mojo llama2.mojo stories15M.bin -s 99 -n 256 -t 0.5 -i \"Llama is an animal\"")
+    print("Options:")
+    print("  -s <int>    random seed, default time.now()")
+    print("  -t <float>  temperature in [0,1.0], default 1.0")
+    print("  -n <int>    number of steps to run for, default 256. 0 = max_seq_len")
+    print("  -i <string> input prompt")
 
 
 fn main() raises:
@@ -696,7 +702,7 @@ fn main() raises:
     print("SIMD vector width: ", nelts)
     var tokenizer = StringRef("tokenizer.bin")
     var checkpoint = StringRef("stories15M.bin")
-    var temperature = 0.0
+    var temperature = 0.9
     var steps = 256
     var prompt = String("")
     var rng_seed: Int = time.now()
