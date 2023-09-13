@@ -613,7 +613,8 @@ fn time_in_ms() -> Int:
 
 
 fn main() raises:
-    print("num hardware threads: ", num_cores(), " SIMD vector width: ", nelts)
+    print("num hardware threads: ", num_cores())
+    print("SIMD vector width: ", nelts)
     let checkpoint = "stories15M.bin"
     # let checkpoint = "stories110M.bin"
     let tokenizer = "tokenizer.bin"
@@ -656,10 +657,6 @@ fn main() raises:
     # Initialize with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
     var token = 1
     var pos = 0  # Position in the sequence
-    # Explicitly print the initial BOS token for stylistic symmetry reasons
-
-    print("<s>")
-
     while pos < steps:
         # Forward the transformer to get logits for the next token
         transformer(token, pos, config, state, weights)
@@ -682,7 +679,6 @@ fn main() raises:
             token_str = token_str.offset(1)
 
         print_str(token_str)
-        # flush?
 
         # Advance forward
         token = next_token
