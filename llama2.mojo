@@ -29,98 +29,51 @@ alias BufferPtrFloat32 = DTypePointer[DType.float32]
 alias PointerStrings = Pointer[PointerString]
 
 
-struct Matrix3:
+struct Matrix:
     var data: BufferPtrFloat32
     var rows: Int
     var cols: Int
     var layers: Int
     var allocated: Int
 
-    fn __init__(inout self, layers: Int, rows: Int, cols: Int):
-        self.data = BufferPtrFloat32.alloc(0)
-        self.rows = rows
-        self.cols = cols
-        self.layers = layers
-        self.allocated = 0
-
-    @always_inline
-    fn alloc(inout self, fill: Int = 0):
-        self.data = BufferPtrFloat32.alloc(self.size())
-        self.allocated = 1
-        if fill == 1:
-            self.zero()
-
-    @always_inline
-    fn alloc_zero(inout self):
-        self.alloc(1)
-
-    @always_inline
-    fn set_buf_ptr(inout self, ptr: BufferPtrFloat32):
-        self.data = ptr
-
-    fn __del__(owned self):
-        if self.allocated == 1:
-            self.data.free()
-
-    @always_inline
-    fn zero(inout self):
-        memset_zero(self.data, self.layers * self.rows * self.cols)
-
-    @always_inline
-    fn size(inout self) -> Int:
-        return self.layers * self.cols * self.rows
-
-    @always_inline
-    fn __getitem__(self, z: Int, y: Int, x: Int) -> Float32:
-        return self.load[1](z, y, x)
-
-    @always_inline
-    fn load[nelts: Int](self, z: Int, y: Int, x: Int) -> SIMD[DType.float32, nelts]:
-        return self.data.simd_load[nelts](z * self.layers + y * self.cols + x)
-
-    @always_inline
-    fn __setitem__(self, z: Int, y: Int, x: Int, val: Float32):
-        return self.store[1](z, y, x, val)
-
-    @always_inline
-    fn store[nelts: Int](self, z: Int, y: Int, x: Int, val: SIMD[DType.float32, nelts]):
-        self.data.simd_store[nelts](z * self.layers + y * self.cols + x, val)
-
-
-struct Matrix:
-    var data: BufferPtrFloat32
-    var rows: Int
-    var cols: Int
-    var allocated: Int
-
     fn __init__(inout self, rows: Int, cols: Int):
         self.data = BufferPtrFloat32.alloc(0)
         self.rows = rows
         self.cols = cols
+        self.layers = 1
         self.allocated = 0
 
     fn __init__(inout self, cols: Int):
         self.data = BufferPtrFloat32.alloc(0)
         self.rows = 1
+        self.layers = 1
         self.cols = cols
         self.allocated = 0
+
+    fn __init__(inout self, layers: Int, rows: Int, cols: Int):
+        self.__init__(rows, cols)
+        self.layers = layers
 
     fn __del__(owned self):
         if self.allocated == 1:
             self.data.free()
 
+    @always_inline
     fn alloc(inout self, fill: Int = 0):
         self.data = BufferPtrFloat32.alloc(self.size())
         self.allocated = 1
         if fill == 1:
             self.zero()
 
+    @always_inline
     fn alloc_zero(inout self):
         self.alloc(1)
 
+    @always_inline
     fn zero(inout self):
-        memset_zero(self.data, self.rows * self.cols)
+        memset_zero(self.data, self.size())
 
+    @always_inline
     fn set_buf_ptr(inout self, ptr: BufferPtrFloat32):
         self.data = ptr
 
@@ -130,8 +83,9 @@ struct Matrix:
         self.rows = rows
         self.cols = cols
 
+    @always_inline
     fn size(inout self) -> Int:
-        return self.cols * self.rows
+        return self.cols * self.rows * self.layers
 
     @always_inline
     fn __getitem__(self, y: Int, x: Int) -> Float32:
@@ -164,6 +118,22 @@ struct Matrix:
     @always_inline
     fn store[nelts: Int](self, x: Int, val: SIMD[DType.float32, nelts]):
         self.data.simd_store[nelts](x, val)
+
+    @always_inline
+    fn __getitem__(self, z: Int, y: Int, x: Int) -> Float32:
+        return self.load[1](z, y, x)
+
+    @always_inline
+    fn load[nelts: Int](self, z: Int, y: Int, x: Int) -> SIMD[DType.float32, nelts]:
+        return self.data.simd_load[nelts](z * self.layers + y * self.cols + x)
+
+    @always_inline
+    fn __setitem__(self, z: Int, y: Int, x: Int, val: Float32):
+        return self.store[1](z, y, x, val)
+
+    @always_inline
+    fn store[nelts: Int](self, z: Int, y: Int, x: Int, val: SIMD[DType.float32, nelts]):
+        self.data.simd_store[nelts](z * self.layers + y * self.cols + x, val)
 
 
 fn read_val_int(inout buf: FileBuf) -> Int:
@@ -253,8 +223,8 @@ struct RunState:
     var v: Matrix  # value (dim,)
     var att: Matrix  # buffer for scores/attention values (n_heads, seq_len)
     var logits: Matrix  # output logits
-    var key_cache: Matrix3  # (layer, seq_len, dim)
-    var value_cache: Matrix3  # (layer, seq_len, dim)
+    var key_cache: Matrix  # (layer, seq_len, dim)
+    var value_cache: Matrix  # (layer, seq_len, dim)
     var rt: Runtime
 
     fn __init__(inout self, config: Config):
@@ -278,9 +248,9 @@ struct RunState:
         self.att.alloc_zero()
         self.logits = Matrix(config.vocab_size)
         self.logits.alloc_zero()
-        self.key_cache = Matrix3(config.n_layers, config.seq_len, config.dim)
+        self.key_cache = Matrix(config.n_layers, config.seq_len, config.dim)
         self.key_cache.alloc_zero()
-        self.value_cache = Matrix3(config.n_layers, config.seq_len, config.dim)
+        self.value_cache = Matrix(config.n_layers, config.seq_len, config.dim)
         self.value_cache.alloc_zero()
         self.rt = Runtime(num_cores() // 2)
 
@@ -290,14 +260,14 @@ struct TransformerWeights:
     var freq_cis_real: Matrix
     var freq_cis_imag: Matrix
     var rms_att_weight: Matrix
-    var wq: Matrix3
-    var wk: Matrix3
-    var wv: Matrix3
-    var wo: Matrix3
+    var wq: Matrix
+    var wk: Matrix
+    var wv: Matrix
+    var wo: Matrix
     var rms_ffn_weight: Matrix
-    var w1: Matrix3
-    var w3: Matrix3
-    var w2: Matrix3
+    var w1: Matrix
+    var w3: Matrix
+    var w2: Matrix
     var rms_final_weight: Matrix
     var wcls: Matrix
 
@@ -311,23 +281,23 @@ struct TransformerWeights:
         self.rms_att_weight.set_buf_ptr(
             buf.bitcast_offset_float32(self.rms_att_weight.size())
         )
-        self.wq = Matrix3(config.n_layers, config.dim, config.dim)
+        self.wq = Matrix(config.n_layers, config.dim, config.dim)
         self.wq.set_buf_ptr(buf.bitcast_offset_float32(self.wq.size()))
-        self.wk = Matrix3(config.n_layers, config.dim, config.dim)
+        self.wk = Matrix(config.n_layers, config.dim, config.dim)
         self.wk.set_buf_ptr(buf.bitcast_offset_float32(self.wk.size()))
-        self.wv = Matrix3(config.n_layers, config.dim, config.dim)
+        self.wv = Matrix(config.n_layers, config.dim, config.dim)
         self.wv.set_buf_ptr(buf.bitcast_offset_float32(self.wv.size()))
-        self.wo = Matrix3(config.n_layers, config.dim, config.dim)
+        self.wo = Matrix(config.n_layers, config.dim, config.dim)
         self.wo.set_buf_ptr(buf.bitcast_offset_float32(self.wo.size()))
         self.rms_ffn_weight = Matrix(config.n_layers, config.dim)
         self.rms_ffn_weight.set_buf_ptr(
             buf.bitcast_offset_float32(self.rms_ffn_weight.size())
         )
-        self.w1 = Matrix3(config.n_layers, config.dim, config.hidden_dim)
+        self.w1 = Matrix(config.n_layers, config.dim, config.hidden_dim)
         self.w1.set_buf_ptr(buf.bitcast_offset_float32(self.w1.size()))
-        self.w2 = Matrix3(config.n_layers, config.dim, config.hidden_dim)
+        self.w2 = Matrix(config.n_layers, config.dim, config.hidden_dim)
         self.w2.set_buf_ptr(buf.bitcast_offset_float32(self.w2.size()))
-        self.w3 = Matrix3(config.n_layers, config.dim, config.hidden_dim)
+        self.w3 = Matrix(config.n_layers, config.dim, config.hidden_dim)
         self.w3.set_buf_ptr(buf.bitcast_offset_float32(self.w3.size()))
         self.rms_final_weight = Matrix(config.dim)
         self.rms_final_weight.set_buf_ptr(
@@ -435,15 +405,6 @@ fn softmax(inout x: BufferPtrFloat32, size: Int) -> None:
     for i in range(size):
         let xi = x.offset(i).simd_load[1](0)
         x.offset(i).simd_store[1](0, xi / ssum)
-
-
-fn matmul_naive(C: Matrix, x: Matrix, w: Matrix) -> None:
-    # W(d,n) @ X(n,) -> C (d,)
-    # By far the most amount of time is spent inside this little function
-    for i in range(w.rows):
-        C[i] = 0.0
-        for j in range(w.cols):
-            C[i] += x[j] * w[i, j]
 
 
 fn matmul_parallelized(C: Matrix, A: Matrix, B: Matrix, rt: Runtime):
