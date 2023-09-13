@@ -1,25 +1,22 @@
-from math import round
-import math
-
-from memory import memset_zero, memcpy
-from memory.unsafe import DTypePointer
-from random import rand
-from sys.info import simdwidthof
+from algorithm import sum
+from algorithm import vectorize, parallelize
 from builtin import string
-import time
-import random
-import os
-
-from runtime.llcl import num_cores, Runtime
-
-from read import BufReader, File
+from math import round
+from memory import memset_zero, memcpy
 from memory.buffer import Buffer
-
+from memory.unsafe import DTypePointer
 from python import Python
+from random import rand
+from read import BufReader, File
+from runtime.llcl import num_cores, Runtime
+from sys import argv
 
 # The SIMD vector width.
-from algorithm import vectorize, parallelize
-from algorithm import sum
+from sys.info import simdwidthof
+import math
+import os
+import random
+import time
 
 alias nelts = (2 * simdwidthof[DType.float32]())
 
@@ -612,16 +609,54 @@ fn time_in_ms() -> Int:
     return time.now() // 1_000_000
 
 
+fn print_usage():
+    print("Usage: mojo llama2.mojo <checkpoint> [options]")
+
+
 fn main() raises:
     print("num hardware threads: ", num_cores())
     print("SIMD vector width: ", nelts)
-    let checkpoint = "stories15M.bin"
-    # let checkpoint = "stories110M.bin"
-    let tokenizer = "tokenizer.bin"
-    let temperature = 0.0
+    var tokenizer = StringRef("tokenizer.bin")
+    var checkpoint = StringRef("stories15M.bin")
+    var temperature = 0.0
     var steps = 256
-    let prompt = ""
-    let rng_seed: Int = time.now()
+    var prompt = String("")
+    var rng_seed: Int = time.now()
+
+    @parameter
+    fn argparse() raises -> Int:
+        let args = argv()
+        if len(args) < 2:
+            return 0
+        checkpoint = args[1]
+        for i in range(2, len(args), 2):
+            if args[i] == "-p":
+                print("Option not supported: ", args[i])
+            if args[i] == "-n":
+                steps = atol(args[i + 1])
+            if args[i] == "-s":
+                rng_seed = atol(args[i + 1])
+            if args[i] == "-i":
+                prompt = args[i + 1]
+            if args[i] == "-t":
+                let val = args[i + 1]
+                temperature = 0.0
+                # hacky parse float, keep only 1 digit
+                for c in range(0, len(val)):
+                    if val[c] == ".":
+                        temperature += atol(val[c + 1]) * 0.1
+                        break
+                    else:
+                        temperature = atol(val[c])
+                if temperature < -1e9 or temperature > (1 + 1e9):
+                    print("Wrong temperature value", temperature)
+                    return 0
+        return 1
+    let res = argparse()
+    if res == 0:
+        print_usage()
+        return
+
     random.seed(rng_seed)
     var fbuf: FileBuf = FileBuf()
     var tbuf: FileBuf = FileBuf()
