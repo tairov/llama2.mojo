@@ -67,17 +67,21 @@ wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
 Then, just run the Mojo
 
 ```bash
-mojo llama2.mojo
-num hardware threads:  6  SIMD vector width:  8
+mojo llama2.mojo stories15M.bin -s 100 -n 256 -t 0.5 -i "Llama is an animal"
+num hardware threads:  6
+SIMD vector width:  16
 checkpoint size:  60816028
+Llama is an animal was walking down the street. She stopped and looked up with a big smile on her face. She had a puppy in her arms. She was so excited to have a new friend.
+The puppy ran up to her and said, "Hi! I'm here to be your friend!"
+Mandy smiled and said, "Hi! I'm Mandy. Can I play with you?"
+The puppy barked and wagged his tail. Mandy was so happy! She gave the puppy a big hug and they played with the puppy all afternoon.
+When it was time to go home, Mandy said, "I have to go now. Goodbye!"
+The puppy barked and said, "Goodbye Mandy! See you tomorrow!"
+Mandy waved goodbye and then she went back home. She was so happy to have a new friend.
 <s>
-Once upon a time, there was a little girl named Lily. She loved to play outside in the sunshine. One day, she saw a big, red ball in the sky. It was the sun! She thought it was so pretty.
-Lily wanted to play with the ball, but it was too high up in the sky. She tried to jump and reach it, but she couldn't. Then, she had an idea. She would use a stick to knock the ball down.
-Lily found a stick and tried to hit the ball. But the stick was too short. She tried again and again, but she couldn't reach it. She felt sad.
-Suddenly, a kind man came by and saw Lily. He asked her what was wrong. Lily told him about the ball. The man smiled and said, "I have a useful idea!" He took out a long stick and used it to knock the ball down. Lily was so happy! She thanked the man and they played together in the sunshine.
-<s>
-Once upon a time, there was a little girl named Lily. She loved to play outside in the sunshine. One day, she saw a big, red
-achieved tok/s:  264.24870466321244
+Once upon a time, there was a little girl named Lily. She loved to play outside and explore the world around her. One day, she went for a walk in the park with her mommy. They saw a big tree with lots of leaves.
+Lily said, "
+achieved tok/s:  359.66149506346966
 ```
 
 ## Running via Docker
