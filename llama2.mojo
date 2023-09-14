@@ -136,14 +136,14 @@ struct Matrix:
 fn read_val_int(inout buf: FileBuf) -> Int:
     # DTypePointer[DType.ui8](buf.data).bitcast[DType.ui8]()
     let data = buf.data.offset(buf.offset).bitcast[DType.uint32]()
-    let result = data.simd_load[1](0)
+    let result = data.load(0)
     buf.offset += 4
     return result.to_int()
 
 
 fn read_val_float32(inout buf: FileBuf) -> Float32:
     # DTypePointer[DType.ui8](buf.data).bitcast[DType.ui8]()
-    let val = buf.data.offset(buf.offset).bitcast[DType.float32]().simd_load[1](0)
+    let val = buf.data.offset(buf.offset).bitcast[DType.float32]().load(0)
     buf.offset += 4
     return val
 
@@ -151,7 +151,7 @@ fn read_val_float32(inout buf: FileBuf) -> Float32:
 fn read_val_str(inout buf: FileBuf, slen: Int) -> PointerString:
     let str = PointerString.alloc(slen + 1)
     for i in range(slen):
-        str.store(i, buf.data.simd_load[1](buf.offset))
+        str.store(i, buf.data.load(buf.offset))
         buf.offset += 1
     str.store(slen, 0)
 
@@ -379,7 +379,7 @@ fn tokenizer_init(inout tok: Tokenizer, inout buf: FileBuf) -> None:
 
     # read vocab_scores & vocab values (tokens)
     for i in range(0, tok.vocab_size):
-        tok.vocab_scores.simd_store[1](i, read_val_float32(buf))
+        tok.vocab_scores.store(i, read_val_float32(buf))
         let slen = read_val_int(buf)
         tok.vocab.store(i, read_val_str(buf, slen))
 
@@ -390,8 +390,8 @@ fn tokenizer_init(inout tok: Tokenizer, inout buf: FileBuf) -> None:
 
 fn accum(inout a: BufferPtrFloat32, b: BufferPtrFloat32, size: Int) -> None:
     for i in range(size):
-        let val = a.offset(i).simd_load[1](0) + b.offset(i).simd_load[1](0)
-        a.offset(i).simd_store[1](0, val)
+        let val = a.offset(i).load(0) + b.offset(i).load(0)
+        a.offset(i).store(0, val)
 
 
 fn rmsnorm(
@@ -400,33 +400,33 @@ fn rmsnorm(
     # Calculate sum of squares
     var ss: Float32 = 0.0
     for i in range(size):
-        let xx = x.offset(i).simd_load[1](0) ** 2
+        let xx = x.offset(i).load(0) ** 2
         ss += xx
     ss = ss / size + 1e-5
     ss = 1.0 / math.sqrt(ss)
     # Normalize and scale
     for j in range(size):
-        let val = weight.offset(j).simd_load[1](0) * (ss * x.offset(j).simd_load[1](0))
-        o.offset(j).simd_store[1](0, val)
+        let val = weight.offset(j).load(0) * (ss * x.offset(j).load(0))
+        o.offset(j).store(0, val)
 
 
 fn softmax(inout x: BufferPtrFloat32, size: Int) -> None:
     # Find max value (for numerical stability)
-    var max_val: Float32 = x.offset(0).simd_load[1](0)
+    var max_val: Float32 = x.offset(0).load(0)
     for i in range(size):
-        let xi = x.offset(i).simd_load[1](0)
+        let xi = x.offset(i).load(0)
         if xi > max_val:
             max_val = xi
     # Exp and sum
     var ssum: Float32 = 0.0
     for i in range(size):
-        let xi = x.offset(i).simd_load[1](0)
-        x.offset(i).simd_store[1](0, math.exp(xi - max_val))
-        ssum += x.offset(i).simd_load[1](0)
+        let xi = x.offset(i).load(0)
+        x.offset(i).store(0, math.exp(xi - max_val))
+        ssum += x.offset(i).load(0)
     # Normalize
     for i in range(size):
-        let xi = x.offset(i).simd_load[1](0)
-        x.offset(i).simd_store[1](0, xi / ssum)
+        let xi = x.offset(i).load(0)
+        x.offset(i).store(0, xi / ssum)
 
 
 fn matmul_parallelized(C: Matrix, A: Matrix, B: Matrix, rt: Runtime):
@@ -499,16 +499,16 @@ fn transformer(
 
             # Rotate q and k by the freq_cis_real and freq_cis_imag
             for i in range(0, head_size, 2):
-                let q0 = q.offset(i).simd_load[1](0)
-                let q1 = q.offset(i + 1).simd_load[1](0)
-                let k0 = k.offset(i).simd_load[1](0)
-                let k1 = k.offset(i + 1).simd_load[1](0)
-                let fcr = freq_cis_real_row.offset(i // 2).simd_load[1](0)
-                let fci = freq_cis_imag_row.offset(i // 2).simd_load[1](0)
-                q.offset(i).simd_store[1](0, q0 * fcr - q1 * fci)
-                q.offset(i + 1).simd_store[1](0, q0 * fci + q1 * fcr)
-                k.offset(i).simd_store[1](0, k0 * fcr - k1 * fci)
-                k.offset(i + 1).simd_store[1](0, k0 * fci + k1 * fcr)
+                let q0 = q.offset(i).load(0)
+                let q1 = q.offset(i + 1).load(0)
+                let k0 = k.offset(i).load(0)
+                let k1 = k.offset(i + 1).load(0)
+                let fcr = freq_cis_real_row.offset(i // 2).load(0)
+                let fci = freq_cis_imag_row.offset(i // 2).load(0)
+                q.offset(i).store(0, q0 * fcr - q1 * fci)
+                q.offset(i + 1).store(0, q0 * fci + q1 * fcr)
+                k.offset(i).store(0, k0 * fcr - k1 * fci)
+                k.offset(i + 1).store(0, k0 * fci + k1 * fcr)
 
         # Save key,value at this time step (pos) to our kv cache
         let loff = l * config.seq_len * dim  # kv cache layer offset for convenience
@@ -532,11 +532,11 @@ fn transformer(
                 # Calculate the attention score as the dot product of q and k
                 var score: Float32 = 0.0
                 for i in range(head_size):
-                    score += q.offset(i).simd_load[1](0) * k.offset(i).simd_load[1](0)
+                    score += q.offset(i).load(0) * k.offset(i).load(0)
                 score /= math.sqrt[DType.float32, 1](head_size)
 
                 # Save the score to the attention buffer
-                att.offset(t).simd_store[1](0, score)
+                att.offset(t).store(0, score)
 
             # Softmax the scores to get attention weights, from 0..pos inclusively
             softmax(att, pos + 1)
@@ -548,13 +548,13 @@ fn transformer(
                 # Get the value vector for this head and at this timestep
                 let v = state.value_cache.data.offset(loff + t * dim + h * head_size)
                 # Get the attention weight for this timestep
-                let a = att.offset(t).simd_load[1](0)
+                let a = att.offset(t).load(0)
                 # Accumulate the weighted value into xb
                 for i in range(head_size):
-                    let xbi = xb.offset(i).simd_load[1](0) + a * v.offset(i).simd_load[
+                    let xbi = xb.offset(i).load(0) + a * v.offset(i).simd_load[
                         1
                     ](0)
-                    xb.offset(i).simd_store[1](0, xbi)
+                    xb.offset(i).store(0, xbi)
         # Final matrix multiplication to get the output of the attention
         tmpw.set_buf_ptr(weights.wo.data.offset(l * dim * dim), dim, dim)
         matmul(state.xb2, state.xb, tmpw, state.rt)
@@ -616,7 +616,7 @@ fn sample(probabilities: Matrix) -> Int:
     var cdf: Float32 = 0.0
     for i in range(n):
         cdf += probabilities[i]
-        if r.simd_load[1](0) < cdf:
+        if r.load(0) < cdf:
             return i
     return n - 1  # In case of rounding errors
 
