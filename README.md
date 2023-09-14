@@ -11,20 +11,24 @@ This repository serves as a port that provides a Mojo-based implementation of `l
 With the release of [Mojo](https://www.modular.com/blog/mojo-its-finally-here), I was inspired to take my Python port
 of [llama2.py](https://github.com/tairov/llama2.py) and transition it to Mojo. The result? A version that leverages
 Mojo's SIMD & vectorization primitives, boosting the Python performance by nearly 250x. Impressively, the Mojo version
-now outperforms the original llama2.c, even in runfast mode, by 15-20%. This showcases the potential of hardware-level
-optimizations through Mojo's advanced features. I think this also can help us to see how far can we go with the original
-llama2.c hardware optimizations.
+now outperforms the original `llama2.c` compiled in `runfast` mode out of the box by 15-20%.
+This showcases the potential of hardware-level optimizations through Mojo's advanced features.
+I think this also can help us to see how far can we go with the original `llama2.c` hardware optimizations.
 
 ## performance
 
-As it was shown during my experimentations performance of this solution can beat the original `llama2.c` even built
-with `runfast` option. 
+Since there were some debates was this comparison legit or not I did some research and found that in `runfast`
+mode `llama2.c`
+includes multiple optimizations like aggressive vectorization, which makes comparison fair with Mojo SIMD vectorization.
 
-PS. I was trying to make parallelize mode in Mojo working, but that version was much slower. Though, the `llama2.c` built with OMP support can be 2x faster. Still investigating in this direction.
+Further researches of both solutions in parallelized mode compilation showed that `llama2.c` is faster by ~20%
+I'm still investigating in this direction since not all the possible optimizations were applied to the Mojo version so
+far.
 
-### Performance comparison
+### comparison
 
-#### OS/HW specs 
+#### OS/HW specs
+
 ```
 OS:         Ubuntu 20.04
 CPU(s):     6
@@ -32,15 +36,14 @@ Model name: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz
 CPU MHz:    3191.998
 ```
 
-| Model           | [llama2.py](https://github.com/tairov/llama2.py) | [llama2.c](https://github.com/karpathy/llama2.c) | [llama2.c](https://github.com/karpathy/llama2.c) (runfast) | **llama2.mojo** | llama2.mojo (naive matmul) |
-|-----------------|--------------------------------------------------|--------------------------------------------------|------------------------------------------------------------|-----------------|----------------------------|
-| stories15M.bin  | 1.3 tok/s                                        | 75.73 tok/s                                      | 237 tok/s                                                  | 260 tok/s       | 67.26 tok/s                | 
-| stories110M.bin | -                                                | 9 tok/s                                          | 30 tok/s                                                   | 40 tok/s        | 9.20                       | 
+| Model           | [llama2.py](https://github.com/tairov/llama2.py) | [llama2.c](https://github.com/karpathy/llama2.c) | [llama2.c](https://github.com/karpathy/llama2.c) (runfast) | [llama2.c](https://github.com/karpathy/llama2.c) (OMP/parallelized) | **llama2.mojo** | **llama2.mojo** (parallelized) | llama2.mojo (naive matmul) |
+|-----------------|--------------------------------------------------|--------------------------------------------------|------------------------------------------------------------|---------------------------------------------------------------------|-----------------|--------------------------------|----------------------------|
+| stories15M.bin  | 1.3 tok/s                                        | 75.73 tok/s                                      | 237 tok/s                                                  | 450 tok/s                                                           | 260 tok/s       | 390 tok/s                      | 67.26 tok/s                | 
+| stories110M.bin | -                                                | 9 tok/s                                          | 30 tok/s                                                   | 64 tok/s                                                            | 40 tok/s        | 57 tok/s                       | 9.20 tok/s                 | 
 
 ## prerequisites
 
-Make sure you have installed & configured mojo on your environment.
-[Get Started](https://docs.modular.com/mojo/manual/get-started/index.html)
+Make sure you have installed and [configured mojo on your environment](https://docs.modular.com/mojo/manual/get-started/index.html)
 
 Or you can use [mojo playground](https://playground.modular.com/) to run this model.
 
@@ -95,7 +98,9 @@ achieved tok/s:  359.66149506346966
 docker build -t llama2.mojo .
 docker run -it llama2.mojo
 ```
+
 With Gradio UI:
+
 ```bash
 # uncomment the last line in Dockerfile CMD ["python", "gradio_app.py"]
 docker run -it -p 0.0.0.0:7860:7860 llama2.mojo
