@@ -419,14 +419,6 @@ fn rmsnorm(
     vectorize[nelts, _norm](size)
 
 
-# fn softmax(inout x: BufferPtrFloat32, size: Int) -> None:
-#     # Find max value (for numerical stability)
-#     var max_val: Float32 = x.offset(0).simd_load[1](0)
-#     for i in range(size):
-#         let xi = x.offset(i).simd_load[1](0)
-#         if xi > max_val:
-#             max_val = xi
-
 fn softmax(inout x: BufferPtrFloat32, size: Int) -> None:
     # Find max value (for numerical stability)
     var max_val: Float32 = -1e9
