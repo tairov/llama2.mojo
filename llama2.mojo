@@ -168,7 +168,7 @@ fn str_concat(s1: PointerString, s2: PointerString) -> PointerString:
     while s2[l2] != 0:
         l2 += 1
 
-    let str = PointerString.alloc(l1 + l2)
+    let str = PointerString.alloc(l1 + l2 + 1)
     memcpy[UInt8](str, s1, l1)
     memcpy[UInt8](str.offset(l1), s2, l2)
     str.store(l1 + l2, 0)
