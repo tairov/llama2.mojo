@@ -419,13 +419,21 @@ fn rmsnorm(
     vectorize[nelts, _norm](size)
 
 
+# fn softmax(inout x: BufferPtrFloat32, size: Int) -> None:
+#     # Find max value (for numerical stability)
+#     var max_val: Float32 = x.offset(0).simd_load[1](0)
+#     for i in range(size):
+#         let xi = x.offset(i).simd_load[1](0)
+#         if xi > max_val:
+#             max_val = xi
+
 fn softmax(inout x: BufferPtrFloat32, size: Int) -> None:
     # Find max value (for numerical stability)
-    var max_val = x.offset(0).simd_load[nelts](0).reduce_max()
-    
+    var max_val: Float32 = -1e9
+
     @parameter
     fn _max[_nelts: Int](j: Int):
-        let val = x.simd_load[nelts](j).reduce_max()
+        let val = x.simd_load[_nelts](j).reduce_max()
         if val > max_val:
             max_val = val
     vectorize[nelts, _max](size)
@@ -443,7 +451,6 @@ fn softmax(inout x: BufferPtrFloat32, size: Int) -> None:
     fn _norm[_nelts: Int](j: Int):
         x.simd_store[_nelts](j, x.simd_load[_nelts](j) / ssum)
     vectorize[nelts, _norm](size)
-
 
 fn matmul_parallelized(C: Matrix, A: Matrix, B: Matrix, rt: Runtime):
     @parameter
