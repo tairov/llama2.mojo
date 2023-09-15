@@ -306,7 +306,6 @@ fn rmsnorm(inout o: TensorF32, x: TensorF32, weight: TensorF32) -> None:
     fn _norm[_nelts: Int](j: Int):
         let val = weight.simd_load[_nelts](j) * ss * x.simd_load[_nelts](j)
         o.simd_store[_nelts](j, val)
-
     vectorize[nelts, _norm](size)
 
 
@@ -384,11 +383,11 @@ fn transformer(
     # Copy the token embedding into x
     let content_row = weights.token_embedding_table.data().offset(token * dim)
     memcpy[DType.float32](x.data(), content_row, config.dim)
-
+    print(387)
     # Pluck out the "pos" row of freq_cis_real and freq_cis_imag
     let freq_cis_real_row = weights.freq_cis_real.data().offset(pos * head_size // 2)
     let freq_cis_imag_row = weights.freq_cis_imag.data().offset(pos * head_size // 2)
-
+    print(391)
     # Forward all the layers
     for l in range(config.n_layers):
         # Attention rmsnorm
@@ -396,13 +395,13 @@ fn transformer(
             weights.rms_att_weight.data().offset(l * dim), get_tspec_f32(dim)
         )
         rmsnorm(state.xb, x, tmpw)
-
+        print(399)
         # QKV matmuls for this position
         tmpw = TensorF32(
             weights.wq.data().offset(l * dim * dim), get_tspec_f32(dim, dim)
         )
         matmul(state.q, state.xb, tmpw, state.rt)
-
+        print(405)
         tmpw = TensorF32(
             weights.wk.data().offset(l * dim * dim), get_tspec_f32(dim, dim)
         )
@@ -412,7 +411,7 @@ fn transformer(
             weights.wv.data().offset(l * dim * dim), get_tspec_f32(dim, dim)
         )
         matmul(state.v, state.xb, tmpw, state.rt)
-
+        print(415)
         # Apply RoPE rotation to the q and k vectors for each head
         for h in range(config.n_heads):
             # Get the q and k vectors for this head
@@ -704,7 +703,6 @@ fn main() raises:
 
     let weights: TransformerWeights = TransformerWeights(config, shared_weights, fbuf)
     
-    print("crashing")
 
     var tok: Tokenizer = Tokenizer(config.vocab_size)
     
@@ -738,7 +736,7 @@ fn main() raises:
     while pos < steps:
         # Forward the transformer to get logits for the next token
         transformer(token, pos, config, state, weights)
-
+        print("740")
         if pos < len(prompt_tokens):
             next_token = prompt_tokens[pos]
         else:
