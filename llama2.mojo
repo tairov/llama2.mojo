@@ -389,44 +389,70 @@ fn tokenizer_init(inout tok: Tokenizer, inout buf: FileBuf) -> None:
 
 
 fn accum(inout a: BufferPtrFloat32, b: BufferPtrFloat32, size: Int) -> None:
-    for i in range(size):
-        let val = a.offset(i).load(0) + b.offset(i).load(0)
-        a.offset(i).store(0, val)
+    @parameter
+    fn _acc[_nelts: Int](j: Int):
+        a.offset(j).simd_store[_nelts](
+            0, a.offset(j).simd_load[_nelts](0) + b.offset(j).simd_load[_nelts](0)
+        )
+
+    vectorize[nelts, _acc](size)
 
 
 fn rmsnorm(
     inout o: BufferPtrFloat32, x: BufferPtrFloat32, weight: BufferPtrFloat32, size: Int
 ) -> None:
     # Calculate sum of squares
-    var ss: Float32 = 0.0
-    for i in range(size):
-        let xx = x.offset(i).load(0) ** 2
-        ss += xx
+    var tmp = SIMD[DType.float32, nelts](0)
+
+    @parameter
+    fn _sum2[_nelts: Int](j: Int):
+        if _nelts < nelts:
+            tmp[0] += (x.offset(j).simd_load[_nelts](0) ** 2).reduce_add()
+        else:
+            tmp += x.offset(j).simd_load[nelts](0) ** 2
+
+    vectorize[nelts, _sum2](size)
+
+    var ss: Float32 = tmp.reduce_add()
     ss = ss / size + 1e-5
     ss = 1.0 / math.sqrt(ss)
+
     # Normalize and scale
-    for j in range(size):
-        let val = weight.offset(j).load(0) * (ss * x.offset(j).load(0))
-        o.offset(j).store(0, val)
+    @parameter
+    fn _norm[_nelts: Int](j: Int):
+        let val = weight.simd_load[_nelts](j) * ss * x.simd_load[_nelts](j)
+        o.offset(j).simd_store[_nelts](0, val)
+
+    vectorize[nelts, _norm](size)
 
 
 fn softmax(inout x: BufferPtrFloat32, size: Int) -> None:
     # Find max value (for numerical stability)
-    var max_val: Float32 = x.offset(0).load(0)
-    for i in range(size):
-        let xi = x.offset(i).load(0)
-        if xi > max_val:
-            max_val = xi
+    var max_val: Float32 = -1e9
+
+    @parameter
+    fn _max[_nelts: Int](j: Int):
+        let val = x.simd_load[_nelts](j).reduce_max()
+        if val > max_val:
+            max_val = val
+
+    vectorize[nelts, _max](size)
+
     # Exp and sum
     var ssum: Float32 = 0.0
-    for i in range(size):
-        let xi = x.offset(i).load(0)
-        x.offset(i).store(0, math.exp(xi - max_val))
-        ssum += x.offset(i).load(0)
-    # Normalize
-    for i in range(size):
-        let xi = x.offset(i).load(0)
-        x.offset(i).store(0, xi / ssum)
+
+    @parameter
+    fn _sum_exp[_nelts: Int](j: Int):
+        x.simd_store[_nelts](j, math.exp(x.simd_load[_nelts](j) - max_val))
+        ssum += x.simd_load[_nelts](j).reduce_add()
+
+    vectorize[nelts, _sum_exp](size)
+
+    @parameter
+    fn _norm[_nelts: Int](j: Int):
+        x.simd_store[_nelts](j, x.simd_load[_nelts](j) / ssum)
+
+    vectorize[nelts, _norm](size)
 
 
 fn matmul_parallelized(C: Matrix, A: Matrix, B: Matrix, rt: Runtime):
@@ -687,7 +713,10 @@ fn time_in_ms() -> Int:
 
 fn print_usage():
     print("Usage: mojo llama2.mojo <checkpoint> [options]")
-    print("Example: mojo llama2.mojo stories15M.bin -s 99 -n 256 -t 0.5 -i \"Llama is an animal\"")
+    print(
+        'Example: mojo llama2.mojo stories15M.bin -s 99 -n 256 -t 0.5 -i "Llama is an'
+        ' animal"'
+    )
     print("Options:")
     print("  -s <int>    random seed, default time.now()")
     print("  -t <float>  temperature in [0,1.0], default 1.0")
