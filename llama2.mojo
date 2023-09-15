@@ -577,7 +577,7 @@ fn transformer(
                 let a = att.offset(t).load(0)
                 # Accumulate the weighted value into xb
                 for i in range(head_size):
-                    let xbi = xb.offset(i).load(0) + a * v.offset(i).simd_load[1](0)
+                    let xbi = xb.offset(i).load(0) + a * v.offset(i).load(0)
                     xb.offset(i).store(0, xbi)
         # Final matrix multiplication to get the output of the attention
         tmpw.set_buf_ptr(weights.wo.data.offset(l * dim * dim), dim, dim)
