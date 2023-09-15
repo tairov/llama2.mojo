@@ -518,7 +518,8 @@ fn transformer(
         matmul(state.v, state.xb, tmpw, state.rt)
 
         # Apply RoPE rotation to the q and k vectors for each head
-        for h in range(config.n_heads):
+        @parameter
+        fn compute_head(h: Int):
             # Get the q and k vectors for this head
             let q = state.q.data.offset(h * head_size)
             let k = state.k.data.offset(h * head_size)
@@ -535,6 +536,8 @@ fn transformer(
                 q.offset(i + 1).store(0, q0 * fci + q1 * fcr)
                 k.offset(i).store(0, k0 * fcr - k1 * fci)
                 k.offset(i + 1).store(0, k0 * fci + k1 * fcr)
+
+        parallelize[compute_head](state.rt, config.n_heads, state.rt.parallelism_level())
 
         # Save key,value at this time step (pos) to our kv cache
         let loff = l * config.seq_len * dim  # kv cache layer offset for convenience
