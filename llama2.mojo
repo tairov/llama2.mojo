@@ -17,6 +17,8 @@ import math
 import os
 import random
 import time
+from tensor import Tensor, TensorSpec, TensorShape
+from utils.index import Index
 
 alias nelts = (2 * simdwidthof[DType.float32]())
 
@@ -25,112 +27,7 @@ alias BufferPtrType = DTypePointer[DType.uint8]
 alias BufferPtrFloat32 = DTypePointer[DType.float32]
 alias PointerStrings = Pointer[PointerString]
 
-
-struct Matrix:
-    var data: BufferPtrFloat32
-    var rows: Int
-    var cols: Int
-    var layers: Int
-    var allocated: Int
-
-    fn __init__(inout self, rows: Int, cols: Int):
-        self.data = BufferPtrFloat32.alloc(0)
-        self.rows = rows
-        self.cols = cols
-        self.layers = 1
-        self.allocated = 0
-
-    fn __init__(inout self, cols: Int):
-        self.data = BufferPtrFloat32.alloc(0)
-        self.rows = 1
-        self.layers = 1
-        self.cols = cols
-        self.allocated = 0
-
-    fn __init__(inout self, layers: Int, rows: Int, cols: Int):
-        self.__init__(rows, cols)
-        self.layers = layers
-
-    fn __del__(owned self):
-        if self.allocated == 1:
-            self.data.free()
-
-    @always_inline
-    fn alloc(inout self, fill: Int = 0):
-        self.data = BufferPtrFloat32.alloc(self.size())
-        self.allocated = 1
-        if fill == 1:
-            self.zero()
-
-    @always_inline
-    fn alloc_zero(inout self):
-        self.alloc(1)
-
-    @always_inline
-    fn zero(inout self):
-        memset_zero(self.data, self.size())
-
-    @always_inline
-    fn set_buf_ptr(inout self, ptr: BufferPtrFloat32):
-        self.data = ptr
-
-    # set buf ptr with redefined rows, colss
-    fn set_buf_ptr(inout self, ptr: BufferPtrFloat32, rows: Int, cols: Int):
-        self.data = ptr
-        self.rows = rows
-        self.cols = cols
-
-    @always_inline
-    fn size(inout self) -> Int:
-        return self.cols * self.rows * self.layers
-
-    @always_inline
-    fn __getitem__(self, y: Int, x: Int) -> Float32:
-        return self.load[1](y, x)
-
-    @always_inline
-    fn __getitem__(self, x: Int) -> Float32:
-        return self.load[1](0, x)
-
-    @always_inline
-    fn load[nelts: Int](self, y: Int, x: Int) -> SIMD[DType.float32, nelts]:
-        return self.data.simd_load[nelts](y * self.cols + x)
-
-    @always_inline
-    fn __setitem__(self, y: Int, x: Int, val: Float32):
-        return self.store[1](y, x, val)
-
-    @always_inline
-    fn __setitem__(self, x: Int, val: Float32):
-        return self.store[1](0, x, val)
-
-    @always_inline
-    fn store[nelts: Int](self, y: Int, x: Int, val: SIMD[DType.float32, nelts]):
-        self.data.simd_store[nelts](y * self.cols + x, val)
-
-    @always_inline
-    fn load[nelts: Int](self, x: Int) -> SIMD[DType.float32, nelts]:
-        return self.data.simd_load[nelts](x)
-
-    @always_inline
-    fn store[nelts: Int](self, x: Int, val: SIMD[DType.float32, nelts]):
-        self.data.simd_store[nelts](x, val)
-
-    @always_inline
-    fn __getitem__(self, z: Int, y: Int, x: Int) -> Float32:
-        return self.load[1](z, y, x)
-
-    @always_inline
-    fn load[nelts: Int](self, z: Int, y: Int, x: Int) -> SIMD[DType.float32, nelts]:
-        return self.data.simd_load[nelts](z * self.layers + y * self.cols + x)
-
-    @always_inline
-    fn __setitem__(self, z: Int, y: Int, x: Int, val: Float32):
-        return self.store[1](z, y, x, val)
-
-    @always_inline
-    fn store[nelts: Int](self, z: Int, y: Int, x: Int, val: SIMD[DType.float32, nelts]):
-        self.data.simd_store[nelts](z * self.layers + y * self.cols + x, val)
+alias TensorF32 = Tensor[DType.float32]
 
 
 fn read_val_int(inout buf: FileBuf) -> Int:
@@ -196,7 +93,7 @@ struct FileBuf:
     fn move_offset(inout self, size: Int):
         self.offset += size
 
-    fn bitcast_offset_float32(inout self, size: Int) -> BufferPtrFloat32:
+    fn bitcast_offset_f32(inout self, size: Int) -> BufferPtrFloat32:
         let ret = self.data.offset(self.offset).bitcast[DType.float32]()
         self.offset += size * sizeof[DType.float32]()
         return ret
@@ -235,108 +132,96 @@ struct Config:
 
 
 struct RunState:
-    var x: Matrix  # activation at current time stamp (dim,)
-    var xb: Matrix  # same, but inside a residual branch (dim,)
-    var xb2: Matrix  # an additional buffer just for convenience (dim,)
-    var hb: Matrix  # buffer for hidden dimension in the ffn (hidden_dim,)
-    var hb2: Matrix  # buffer for hidden dimension in the ffn (hidden_dim,)
-    var q: Matrix  # query (dim,)
-    var k: Matrix  # key (dim,)
-    var v: Matrix  # value (dim,)
-    var att: Matrix  # buffer for scores/attention values (n_heads, seq_len)
-    var logits: Matrix  # output logits
-    var key_cache: Matrix  # (layer, seq_len, dim)
-    var value_cache: Matrix  # (layer, seq_len, dim)
+    var x: TensorF32  # activation at current time stamp (dim,)
+    var xb: TensorF32  # same, but inside a residual branch (dim,)
+    var xb2: TensorF32  # an additional buffer just for convenience (dim,)
+    var hb: TensorF32  # buffer for hidden dimension in the ffn (hidden_dim,)
+    var hb2: TensorF32  # buffer for hidden dimension in the ffn (hidden_dim,)
+    var q: TensorF32  # query (dim,)
+    var k: TensorF32  # key (dim,)
+    var v: TensorF32  # value (dim,)
+    var att: TensorF32  # buffer for scores/attention values (n_heads, seq_len)
+    var logits: TensorF32  # output logits
+    var key_cache: TensorF32  # (layer, seq_len, dim)
+    var value_cache: TensorF32  # (layer, seq_len, dim)
     var rt: Runtime
 
     fn __init__(inout self, config: Config):
-        self.x = Matrix(config.dim)
-        self.x.alloc_zero()
-        self.xb = Matrix(config.dim)
-        self.xb.alloc_zero()
-        self.xb2 = Matrix(config.dim)
-        self.xb2.alloc_zero()
-        self.hb = Matrix(config.hidden_dim)
-        self.hb.alloc_zero()
-        self.hb2 = Matrix(config.hidden_dim)
-        self.hb2.alloc_zero()
-        self.q = Matrix(config.dim)
-        self.q.alloc_zero()
-        self.k = Matrix(config.dim)
-        self.k.alloc_zero()
-        self.v = Matrix(config.dim)
-        self.v.alloc_zero()
-        self.att = Matrix(config.n_heads, config.seq_len)
-        self.att.alloc_zero()
-        self.logits = Matrix(config.vocab_size)
-        self.logits.alloc_zero()
-        self.key_cache = Matrix(config.n_layers, config.seq_len, config.dim)
-        self.key_cache.alloc_zero()
-        self.value_cache = Matrix(config.n_layers, config.seq_len, config.dim)
-        self.value_cache.alloc_zero()
+        self.x = TensorF32(config.dim)
+        self.xb = TensorF32(config.dim)
+        self.xb2 = TensorF32(config.dim)
+        self.hb = TensorF32(config.hidden_dim)
+        self.hb2 = TensorF32(config.hidden_dim)
+        self.q = TensorF32(config.dim)
+        self.k = TensorF32(config.dim)
+        self.v = TensorF32(config.dim)
+        self.att = TensorF32(config.n_heads, config.seq_len)
+        self.logits = TensorF32(config.vocab_size)
+        self.key_cache = TensorF32(config.n_layers, config.seq_len, config.dim)
+        self.value_cache = TensorF32(config.n_layers, config.seq_len, config.dim)
         self.rt = Runtime(num_cores() // 2)
 
 
+fn get_tspec_f32(*dims: Int) -> TensorSpec:
+    let spec = TensorSpec(DType.float32, dims)
+    return spec
+
+
 struct TransformerWeights:
-    var token_embedding_table: Matrix
-    var freq_cis_real: Matrix
-    var freq_cis_imag: Matrix
-    var rms_att_weight: Matrix
-    var wq: Matrix
-    var wk: Matrix
-    var wv: Matrix
-    var wo: Matrix
-    var rms_ffn_weight: Matrix
-    var w1: Matrix
-    var w3: Matrix
-    var w2: Matrix
-    var rms_final_weight: Matrix
-    var wcls: Matrix
+    var token_embedding_table: TensorF32
+    var freq_cis_real: TensorF32
+    var freq_cis_imag: TensorF32
+    var rms_att_weight: TensorF32
+    var wq: TensorF32
+    var wk: TensorF32
+    var wv: TensorF32
+    var wo: TensorF32
+    var rms_ffn_weight: TensorF32
+    var w1: TensorF32
+    var w3: TensorF32
+    var w2: TensorF32
+    var rms_final_weight: TensorF32
+    var wcls: TensorF32
 
     fn __init__(inout self, config: Config, shared_weights: Int, inout buf: FileBuf):
-        self.token_embedding_table = Matrix(config.vocab_size, config.dim)
+        var tspec = get_tspec_f32(config.vocab_size, config.dim)
+        # __init__(owned ptr: DTypePointer[dtype], owned spec: TensorSpec)
+        self.token_embedding_table = TensorF32(
+            buf.bitcast_offset_f32(tspec.bytecount()), tspec
+        )
         # set buf ptr to buf data from file
-        self.token_embedding_table.set_buf_ptr(
-            buf.bitcast_offset_float32(self.token_embedding_table.size())
+        tspec = get_tspec_f32(config.n_layers, config.dim)
+        self.rms_att_weight = TensorF32(
+            buf.bitcast_offset_f32(tspec.bytecount()), tspec
         )
-        self.rms_att_weight = Matrix(config.n_layers, config.dim)
-        self.rms_att_weight.set_buf_ptr(
-            buf.bitcast_offset_float32(self.rms_att_weight.size())
+        tspec = get_tspec_f32(config.n_layers, config.dim, config.dim)
+        self.wq = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        tspec = get_tspec_f32(config.n_layers, config.dim, config.dim)
+        self.wk = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        tspec = get_tspec_f32(config.n_layers, config.dim, config.dim)
+        self.wv = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        tspec = get_tspec_f32(config.n_layers, config.dim, config.dim)
+        self.wo = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        tspec = get_tspec_f32(config.n_layers, config.dim)
+        self.rms_ffn_weight = TensorF32(
+            buf.bitcast_offset_f32(tspec.bytecount()), tspec
         )
-        self.wq = Matrix(config.n_layers, config.dim, config.dim)
-        self.wq.set_buf_ptr(buf.bitcast_offset_float32(self.wq.size()))
-        self.wk = Matrix(config.n_layers, config.dim, config.dim)
-        self.wk.set_buf_ptr(buf.bitcast_offset_float32(self.wk.size()))
-        self.wv = Matrix(config.n_layers, config.dim, config.dim)
-        self.wv.set_buf_ptr(buf.bitcast_offset_float32(self.wv.size()))
-        self.wo = Matrix(config.n_layers, config.dim, config.dim)
-        self.wo.set_buf_ptr(buf.bitcast_offset_float32(self.wo.size()))
-        self.rms_ffn_weight = Matrix(config.n_layers, config.dim)
-        self.rms_ffn_weight.set_buf_ptr(
-            buf.bitcast_offset_float32(self.rms_ffn_weight.size())
+        tspec = get_tspec_f32(config.n_layers, config.dim, config.hidden_dim)
+        self.w1 = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        tspec = get_tspec_f32(config.n_layers, config.dim, config.hidden_dim)
+        self.w2 = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        tspec = get_tspec_f32(config.n_layers, config.dim, config.hidden_dim)
+        self.w3 = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        tspec = get_tspec_f32(config.dim)
+        self.rms_final_weight = TensorF32(
+            buf.bitcast_offset_f32(tspec.bytecount()), tspec
         )
-        self.w1 = Matrix(config.n_layers, config.dim, config.hidden_dim)
-        self.w1.set_buf_ptr(buf.bitcast_offset_float32(self.w1.size()))
-        self.w2 = Matrix(config.n_layers, config.dim, config.hidden_dim)
-        self.w2.set_buf_ptr(buf.bitcast_offset_float32(self.w2.size()))
-        self.w3 = Matrix(config.n_layers, config.dim, config.hidden_dim)
-        self.w3.set_buf_ptr(buf.bitcast_offset_float32(self.w3.size()))
-        self.rms_final_weight = Matrix(config.dim)
-        self.rms_final_weight.set_buf_ptr(
-            buf.bitcast_offset_float32(self.rms_final_weight.size())
-        )
-        self.freq_cis_real = Matrix(config.seq_len, (config.dim // config.n_heads) // 2)
-        self.freq_cis_real.set_buf_ptr(
-            buf.bitcast_offset_float32(self.freq_cis_real.size())
-        )
-        self.freq_cis_imag = Matrix(config.seq_len, (config.dim // config.n_heads) // 2)
-        self.freq_cis_imag.set_buf_ptr(
-            buf.bitcast_offset_float32(self.freq_cis_imag.size())
-        )
-        self.wcls = Matrix(
-            config.vocab_size, config.dim
-        )  # if shared_weights else rest_floats
-        self.wcls.set_buf_ptr(self.token_embedding_table.data)
+        tspec = get_tspec_f32(config.seq_len, (config.dim // config.n_heads) // 2)
+        self.freq_cis_real = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        tspec = get_tspec_f32(config.seq_len, (config.dim // config.n_heads) // 2)
+        self.freq_cis_imag = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        tspec = get_tspec_f32(config.vocab_size, config.dim)
+        self.wcls = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
 
 
 fn read_file(file_name: String, inout buf: FileBuf) raises:
@@ -388,28 +273,27 @@ fn tokenizer_init(inout tok: Tokenizer, inout buf: FileBuf) -> None:
     return None
 
 
-fn accum(inout a: BufferPtrFloat32, b: BufferPtrFloat32, size: Int) -> None:
+fn accum(inout a: TensorF32, b: TensorF32) -> None:
+    let size = a.dim(0)
+
     @parameter
     fn _acc[_nelts: Int](j: Int):
-        a.offset(j).simd_store[_nelts](
-            0, a.offset(j).simd_load[_nelts](0) + b.offset(j).simd_load[_nelts](0)
-        )
+        a.simd_store[_nelts](j, a.simd_load[_nelts](j) + b.simd_load[_nelts](j))
 
     vectorize[nelts, _acc](size)
 
 
-fn rmsnorm(
-    inout o: BufferPtrFloat32, x: BufferPtrFloat32, weight: BufferPtrFloat32, size: Int
-) -> None:
+fn rmsnorm(inout o: TensorF32, x: TensorF32, weight: TensorF32) -> None:
     # Calculate sum of squares
     var tmp = SIMD[DType.float32, nelts](0)
+    let size = x.dim(0)
 
     @parameter
     fn _sum2[_nelts: Int](j: Int):
         if _nelts < nelts:
-            tmp[0] += (x.offset(j).simd_load[_nelts](0) ** 2).reduce_add()
+            tmp[0] += (x.simd_load[_nelts](j) ** 2).reduce_add()
         else:
-            tmp += x.offset(j).simd_load[nelts](0) ** 2
+            tmp += x.simd_load[nelts](j) ** 2
 
     vectorize[nelts, _sum2](size)
 
@@ -421,14 +305,15 @@ fn rmsnorm(
     @parameter
     fn _norm[_nelts: Int](j: Int):
         let val = weight.simd_load[_nelts](j) * ss * x.simd_load[_nelts](j)
-        o.offset(j).simd_store[_nelts](0, val)
+        o.simd_store[_nelts](j, val)
 
     vectorize[nelts, _norm](size)
 
 
-fn softmax(inout x: BufferPtrFloat32, size: Int) -> None:
+fn softmax(inout x: TensorF32) -> None:
     # Find max value (for numerical stability)
     var max_val: Float32 = -1e9
+    let size = x.dim(0)
 
     @parameter
     fn _max[_nelts: Int](j: Int):
@@ -455,7 +340,7 @@ fn softmax(inout x: BufferPtrFloat32, size: Int) -> None:
     vectorize[nelts, _norm](size)
 
 
-fn matmul_parallelized(C: Matrix, A: Matrix, B: Matrix, rt: Runtime):
+fn matmul_parallelized(inout C: TensorF32, A: TensorF32, B: TensorF32, rt: Runtime):
     @parameter
     fn compute_row(i: Int):
         var tmp = SIMD[DType.float32, nelts](0)
@@ -463,17 +348,19 @@ fn matmul_parallelized(C: Matrix, A: Matrix, B: Matrix, rt: Runtime):
         @parameter
         fn dot[_nelts: Int](j: Int):
             if _nelts < nelts:  # take care of tail array elements with length <  nelts
-                tmp[0] += (A.load[_nelts](j) * B.load[_nelts](i, j)).reduce_add()
+                tmp[0] += (
+                    A.simd_load[_nelts](j) * B.simd_load[_nelts](i, j)
+                ).reduce_add()
             else:
-                tmp += A.load[nelts](j) * B.load[nelts](i, j)
+                tmp += A.simd_load[nelts](j) * B.simd_load[nelts](i, j)
 
-        vectorize[nelts, dot](B.cols)
-        C[i] = tmp.reduce_add()
+        vectorize[nelts, dot](B.dim(0))
+        C[Index(i)] = tmp.reduce_add()
 
-    parallelize[compute_row](rt, B.rows, rt.parallelism_level())
+    parallelize[compute_row](rt, B.dim(1), rt.parallelism_level())
 
 
-fn matmul(inout C: Matrix, A: Matrix, B: Matrix, rt: Runtime) -> None:
+fn matmul(inout C: TensorF32, A: TensorF32, B: TensorF32, rt: Runtime) -> None:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_parallelized(C, A, B, rt)
 
@@ -486,42 +373,51 @@ fn transformer(
     weights: TransformerWeights,
 ) -> None:
     # A few convenience variables
-    var x = state.x.data
+    var x = state.x
     let dim = config.dim
     let hidden_dim = config.hidden_dim
     let head_size = dim // config.n_heads
 
     # tmp matrix for matmul operations
-    var tmpw = Matrix(0, 0)
+    var tmpw = TensorF32()
 
     # Copy the token embedding into x
-    let content_row = weights.token_embedding_table.data.offset(token * dim)
-    memcpy[DType.float32](x, content_row, config.dim)
+    let content_row = weights.token_embedding_table.data().offset(token * dim)
+    memcpy[DType.float32](x.data(), content_row, config.dim)
 
     # Pluck out the "pos" row of freq_cis_real and freq_cis_imag
-    let freq_cis_real_row = weights.freq_cis_real.data.offset(pos * head_size // 2)
-    let freq_cis_imag_row = weights.freq_cis_imag.data.offset(pos * head_size // 2)
+    let freq_cis_real_row = weights.freq_cis_real.data().offset(pos * head_size // 2)
+    let freq_cis_imag_row = weights.freq_cis_imag.data().offset(pos * head_size // 2)
 
     # Forward all the layers
     for l in range(config.n_layers):
         # Attention rmsnorm
-        rmsnorm(state.xb.data, x, weights.rms_att_weight.data.offset(l * dim), dim)
+        tmpw = TensorF32(
+            weights.rms_att_weight.data().offset(l * dim), get_tspec_f32(dim)
+        )
+        rmsnorm(state.xb, x, tmpw)
 
         # QKV matmuls for this position
-        tmpw.set_buf_ptr(weights.wq.data.offset(l * dim * dim), dim, dim)
+        tmpw = TensorF32(
+            weights.wq.data().offset(l * dim * dim), get_tspec_f32(dim, dim)
+        )
         matmul(state.q, state.xb, tmpw, state.rt)
 
-        tmpw.set_buf_ptr(weights.wk.data.offset(l * dim * dim), dim, dim)
+        tmpw = TensorF32(
+            weights.wk.data().offset(l * dim * dim), get_tspec_f32(dim, dim)
+        )
         matmul(state.k, state.xb, tmpw, state.rt)
 
-        tmpw.set_buf_ptr(weights.wv.data.offset(l * dim * dim), dim, dim)
+        tmpw = TensorF32(
+            weights.wv.data().offset(l * dim * dim), get_tspec_f32(dim, dim)
+        )
         matmul(state.v, state.xb, tmpw, state.rt)
 
         # Apply RoPE rotation to the q and k vectors for each head
         for h in range(config.n_heads):
             # Get the q and k vectors for this head
-            let q = state.q.data.offset(h * head_size)
-            let k = state.k.data.offset(h * head_size)
+            let q = state.q.data().offset(h * head_size)
+            let k = state.k.data().offset(h * head_size)
 
             # Rotate q and k by the freq_cis_real and freq_cis_imag
             for i in range(0, head_size, 2):
@@ -538,23 +434,26 @@ fn transformer(
 
         # Save key,value at this time step (pos) to our kv cache
         let loff = l * config.seq_len * dim  # kv cache layer offset for convenience
-        let key_cache_row = state.key_cache.data.offset(loff + pos * dim)
-        let value_cache_row = state.value_cache.data.offset(loff + pos * dim)
-        memcpy[DType.float32](key_cache_row, state.k.data, config.dim)
-        memcpy[DType.float32](value_cache_row, state.v.data, config.dim)
+        let key_cache_row = state.key_cache.data().offset(loff + pos * dim)
+        let value_cache_row = state.value_cache.data().offset(loff + pos * dim)
+        memcpy[DType.float32](key_cache_row, state.k.data(), config.dim)
+        memcpy[DType.float32](value_cache_row, state.v.data(), config.dim)
 
         # Multihead attention. Iterate over all heads
         for h in range(config.n_heads):
             # Get the query vector for this head
-            let q = state.q.data.offset(h * head_size)
+            let q = state.q.data().offset(h * head_size)
 
             # Attention scores for this head
-            var att = state.att.data.offset(h * config.seq_len)
+            var att = TensorF32(
+                state.att.data().offset(h * config.seq_len),
+                get_tspec_f32(config.seq_len),
+            )
 
             # Iterate over all timesteps, including the current one
             for t in range(pos + 1):
                 # Get the key vector for this head and at this timestep
-                let k = state.key_cache.data.offset(loff + t * dim + h * head_size)
+                let k = state.key_cache.data().offset(loff + t * dim + h * head_size)
                 # Calculate the attention score as the dot product of q and k
                 var score: Float32 = 0.0
                 for i in range(head_size):
@@ -562,38 +461,49 @@ fn transformer(
                 score /= math.sqrt[DType.float32, 1](head_size)
 
                 # Save the score to the attention buffer
-                att.offset(t).store(0, score)
+                att[t] = score
 
             # Softmax the scores to get attention weights, from 0..pos inclusively
-            softmax(att, pos + 1)
+            softmax(att)
 
             # Weighted sum of the values, store back into xb
-            let xb = state.xb.data.offset(h * head_size)
+            let xb = state.xb.data().offset(h * head_size)
             memset_zero(xb, head_size)
             for t in range(pos + 1):
                 # Get the value vector for this head and at this timestep
-                let v = state.value_cache.data.offset(loff + t * dim + h * head_size)
+                let v = state.value_cache.data().offset(loff + t * dim + h * head_size)
                 # Get the attention weight for this timestep
-                let a = att.offset(t).load(0)
+                let a = att[t]
                 # Accumulate the weighted value into xb
                 for i in range(head_size):
                     let xbi = xb.offset(i).load(0) + a * v.offset(i).load(0)
                     xb.offset(i).store(0, xbi)
         # Final matrix multiplication to get the output of the attention
-        tmpw.set_buf_ptr(weights.wo.data.offset(l * dim * dim), dim, dim)
+        tmpw = TensorF32(
+            weights.wo.data().offset(l * dim * dim), get_tspec_f32(dim, dim)
+        )
         matmul(state.xb2, state.xb, tmpw, state.rt)
 
         # Residual connection back into x
-        accum(x, state.xb2.data, dim)
+        accum(x, state.xb2)
 
         # FFN rmsnorm
-        rmsnorm(state.xb.data, x, weights.rms_ffn_weight.data.offset(l * dim), dim)
+        tmpw = TensorF32(
+            weights.rms_ffn_weight.data().offset(l * dim), get_tspec_f32(dim)
+        )
+        rmsnorm(state.xb, x, tmpw)
 
         # Calculate self.w1(x) and self.w3(x) for FFN
-        tmpw.set_buf_ptr(weights.w1.data.offset(l * dim * hidden_dim), hidden_dim, dim)
+        tmpw = TensorF32(
+            weights.w1.data().offset(l * dim * hidden_dim),
+            get_tspec_f32(dim, hidden_dim),
+        )
         matmul(state.hb, state.xb, tmpw, state.rt)
 
-        tmpw.set_buf_ptr(weights.w3.data.offset(l * dim * hidden_dim), hidden_dim, dim)
+        tmpw = TensorF32(
+            weights.w3.data().offset(l * dim * hidden_dim),
+            get_tspec_f32(dim, hidden_dim),
+        )
         matmul(state.hb2, state.xb, tmpw, state.rt)
 
         # Apply SiLU activation function (silu(x) = x * sigmoid(x))
@@ -606,33 +516,36 @@ fn transformer(
             state.hb[i] = state.hb[i] * state.hb2[i]
 
         # Final matrix multiplication to get the output of the FFN
-        tmpw.set_buf_ptr(weights.w2.data.offset(l * dim * hidden_dim), dim, hidden_dim)
+        tmpw = TensorF32(
+            weights.w2.data().offset(l * dim * hidden_dim),
+            get_tspec_f32(dim, hidden_dim),
+        )
         matmul(state.xb, state.hb, tmpw, state.rt)
 
         # Residual connection
-        accum(x, state.xb.data, dim)
+        accum(x, state.xb)
 
     # Final rmsnorm
-    rmsnorm(x, x, weights.rms_final_weight.data, dim)
+    rmsnorm(x, x, weights.rms_final_weight)
 
     # Classifier into logits
-    tmpw.set_buf_ptr(weights.wcls.data, config.vocab_size, dim)
+    tmpw = TensorF32(weights.wcls.data(), get_tspec_f32(config.vocab_size, dim))
     matmul(state.logits, state.x, tmpw, state.rt)
 
 
-fn argmax(v: Matrix) -> Int:
+fn argmax(v: TensorF32) -> Int:
     # return argmax of v
     var max_i: Int = 0
     var max_p: Float32 = v[0]
-    for i in range(v.cols):
+    for i in range(v.dim(0)):
         if v[i] > max_p:
             max_i = i
             max_p = v[i]
     return max_i
 
 
-fn sample(probabilities: Matrix) -> Int:
-    let n = probabilities.cols
+fn sample(probabilities: TensorF32) -> Int:
+    let n = probabilities.dim(0)
     # Sample index from probabilities, they must sum to 1
     # get random value within (min, max) float32 range
     let r = DTypePointer[DType.float32].alloc(1)
@@ -773,6 +686,8 @@ fn main() raises:
     var fbuf: FileBuf = FileBuf()
     var tbuf: FileBuf = FileBuf()
     var config: Config = Config()
+    _ = fbuf.data
+    _ = tbuf.data
 
     read_file(checkpoint, fbuf)
     print("checkpoint size: ", fbuf.size)
@@ -784,16 +699,24 @@ fn main() raises:
         -config.vocab_size if config.vocab_size < 0 else config.vocab_size
     )
 
+    
+    print("good to go!")
+
     let weights: TransformerWeights = TransformerWeights(config, shared_weights, fbuf)
+    
+    print("crashing")
 
     var tok: Tokenizer = Tokenizer(config.vocab_size)
+    
 
     if steps <= 0 or steps > config.seq_len:
         steps = config.seq_len
 
+
     # Read in the tokenizer.bin file
     read_file(tokenizer, tbuf)
     tokenizer_init(tok, tbuf)
+
 
     # Create and initialize the application RunState
     var state = RunState(config)
@@ -828,7 +751,7 @@ fn main() raises:
                 for q in range(config.vocab_size):
                     state.logits[q] = state.logits[q] / temperature
                 # Apply softmax to the logits to get the probabilities for the next token
-                softmax(state.logits.data, config.vocab_size)
+                softmax(state.logits)
                 # Sample from this distribution to get the next token
                 next_token = sample(state.logits)
 
