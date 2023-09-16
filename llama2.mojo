@@ -306,8 +306,12 @@ fn rmsnorm(inout o: TensorF32, x: TensorF32, weight: TensorF32) -> None:
     fn _norm[_nelts: Int](j: Int):
         let val = weight.simd_load[_nelts](j) * ss * x.simd_load[_nelts](j)
         o.simd_store[_nelts](j, val)
+    print(309)
     vectorize[nelts, _norm](size)
+    print(311)
 
+fn foo(inout o: TensorF32, x: TensorF32, weight: TensorF32) -> None:
+    print('foo')
 
 fn softmax(inout x: TensorF32) -> None:
     # Find max value (for numerical stability)
@@ -394,8 +398,10 @@ fn transformer(
         tmpw = TensorF32(
             weights.rms_att_weight.data().offset(l * dim), get_tspec_f32(dim)
         )
-        rmsnorm(state.xb, x, tmpw)
-        print(399)
+        # rmsnorm(state.xb, x, tmpw)
+        print('402 run foo fn')
+        foo(state.xb, x, tmpw)
+        print(403)
         # QKV matmuls for this position
         tmpw = TensorF32(
             weights.wq.data().offset(l * dim * dim), get_tspec_f32(dim, dim)
@@ -698,23 +704,16 @@ fn main() raises:
         -config.vocab_size if config.vocab_size < 0 else config.vocab_size
     )
 
-    
-    print("good to go!")
-
     let weights: TransformerWeights = TransformerWeights(config, shared_weights, fbuf)
-    
 
     var tok: Tokenizer = Tokenizer(config.vocab_size)
-    
 
     if steps <= 0 or steps > config.seq_len:
         steps = config.seq_len
 
-
     # Read in the tokenizer.bin file
     read_file(tokenizer, tbuf)
     tokenizer_init(tok, tbuf)
-
 
     # Create and initialize the application RunState
     var state = RunState(config)
