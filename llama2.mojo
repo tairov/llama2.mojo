@@ -691,8 +691,6 @@ fn main() raises:
     var fbuf: FileBuf = FileBuf()
     var tbuf: FileBuf = FileBuf()
     var config: Config = Config()
-    _ = fbuf.data
-    _ = tbuf.data
 
     read_file(checkpoint, fbuf)
     print("checkpoint size: ", fbuf.size)
