@@ -449,7 +449,7 @@ fn softmax(inout x: BufferPtrFloat32, size: Int) -> None:
     vectorize[nelts, _norm](size)
 
 
-fn matmul_parallelized(C: Matrix, A: Matrix, B: Matrix, rt: Runtime, off: Int):
+fn matmul_parallelized(C: Matrix, A: Matrix, B: Matrix, rt: Runtime):
     @parameter
     fn compute_row(i: Int):
         var tmp = SIMD[DType.float32, nelts](0)
@@ -462,14 +462,14 @@ fn matmul_parallelized(C: Matrix, A: Matrix, B: Matrix, rt: Runtime, off: Int):
                 tmp += A.load[nelts](j) * B.load[nelts](i, j)
 
         vectorize[nelts, dot](B.cols)
-        C[i + off] = tmp.reduce_add()
+        C[i] = tmp.reduce_add()
 
     parallelize[compute_row](rt, B.rows, rt.parallelism_level())
 
 
-fn matmul(inout C: Matrix, A: Matrix, B: Matrix, rt: Runtime, off: Int = 0) -> None:
+fn matmul(inout C: Matrix, A: Matrix, B: Matrix, rt: Runtime) -> None:
     # B (d,n) @ A (n,) -> C (d,)
-    matmul_parallelized(C, A, B, rt, off)
+    matmul_parallelized(C, A, B, rt)
 
 
 fn transformer(
@@ -487,6 +487,7 @@ fn transformer(
 
     # tmp matrix for matmul operations
     var tmpw = Matrix(0, 0)
+    var tmpkv = Matrix(0, 0)
 
     # Copy the token embedding into x
     let content_row = weights.token_embedding_table.data.offset(token * dim)
@@ -507,17 +508,21 @@ fn transformer(
         tmpw.set_buf_ptr(weights.wq.data.offset(l * dim * dim), dim, dim)
         matmul(state.q, state.xb, tmpw, state.rt)
 
-        tmpw.set_buf_ptr(weights.wk.data.offset(l * dim * dim), dim, dim)
-        matmul(state.key_cache, state.xb, tmpw, state.rt, loff + pos * dim)
-
+        # tmpkv = v
+        tmpkv.set_buf_ptr(state.value_cache.data.offset(loff + pos * dim), 1, dim)
         tmpw.set_buf_ptr(weights.wv.data.offset(l * dim * dim), dim, dim)
-        matmul(state.value_cache, state.xb, tmpw, state.rt, loff + pos * dim)
+        matmul(tmpkv, state.xb, tmpw, state.rt)
+
+        # tmpkv = k
+        tmpkv.set_buf_ptr(state.key_cache.data.offset(loff + pos * dim), 1, dim)
+        tmpw.set_buf_ptr(weights.wk.data.offset(l * dim * dim), dim, dim)
+        matmul(tmpkv, state.xb, tmpw, state.rt)
 
         # Apply RoPE rotation to the q and k vectors for each head
         for h in range(config.n_heads):
             # Get the q and k vectors for this head
             let q = state.q.data.offset(h * head_size)
-            let k = state.key_cache.data.offset(loff + pos * dim + h * head_size)
+            let k = tmpkv.data.offset(h * head_size)
             # Rotate q and k by the freq_cis_real and freq_cis_imag
             for i in range(0, head_size, 2):
                 let q0 = q.offset(i).load(0)
@@ -836,4 +841,4 @@ fn main() raises:
             start = time_in_ms()
 
     let end = time_in_ms()
-    print("\nachieved tok/s: ", (steps - 1) / (end - start) * 1000)
+    print("\nachieved tok/s: ", (pos - 1) / (end - start) * 1000)
