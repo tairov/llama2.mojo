@@ -831,7 +831,9 @@ fn main() raises:
                 softmax(state.logits.data, config.vocab_size)
                 # Sample from this distribution to get the next token
                 next_token = sample(state.logits)
-
+            # Finish generating when EOS, BOS appear
+            if next_token == 1 or next_token == 2:
+                break
         var token_str: PointerString = tok.vocab[next_token]
         if token == 1 and token_str[0] == ord(" "):
             token_str = token_str.offset(1)
