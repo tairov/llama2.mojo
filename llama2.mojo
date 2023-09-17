@@ -241,8 +241,6 @@ struct RunState:
     var hb: Matrix  # buffer for hidden dimension in the ffn (hidden_dim,)
     var hb2: Matrix  # buffer for hidden dimension in the ffn (hidden_dim,)
     var q: Matrix  # query (dim,)
-    var k: Matrix  # key (dim,)
-    var v: Matrix  # value (dim,)
     var att: Matrix  # buffer for scores/attention values (n_heads, seq_len)
     var logits: Matrix  # output logits
     var key_cache: Matrix  # (layer, seq_len, dim)
@@ -262,10 +260,6 @@ struct RunState:
         self.hb2.alloc_zero()
         self.q = Matrix(config.dim)
         self.q.alloc_zero()
-        self.k = Matrix(config.dim)
-        self.k.alloc_zero()
-        self.v = Matrix(config.dim)
-        self.v.alloc_zero()
         self.att = Matrix(config.n_heads, config.seq_len)
         self.att.alloc_zero()
         self.logits = Matrix(config.vocab_size)
@@ -455,7 +449,7 @@ fn softmax(inout x: BufferPtrFloat32, size: Int) -> None:
     vectorize[nelts, _norm](size)
 
 
-fn matmul_parallelized(C: Matrix, A: Matrix, B: Matrix, rt: Runtime):
+fn matmul_parallelized(C: Matrix, A: Matrix, B: Matrix, rt: Runtime, off: Int):
     @parameter
     fn compute_row(i: Int):
         var tmp = SIMD[DType.float32, nelts](0)
@@ -468,14 +462,14 @@ fn matmul_parallelized(C: Matrix, A: Matrix, B: Matrix, rt: Runtime):
                 tmp += A.load[nelts](j) * B.load[nelts](i, j)
 
         vectorize[nelts, dot](B.cols)
-        C[i] = tmp.reduce_add()
+        C[i + off] = tmp.reduce_add()
 
     parallelize[compute_row](rt, B.rows, rt.parallelism_level())
 
 
-fn matmul(inout C: Matrix, A: Matrix, B: Matrix, rt: Runtime) -> None:
+fn matmul(inout C: Matrix, A: Matrix, B: Matrix, rt: Runtime, off: Int = 0) -> None:
     # B (d,n) @ A (n,) -> C (d,)
-    matmul_parallelized(C, A, B, rt)
+    matmul_parallelized(C, A, B, rt, off)
 
 
 fn transformer(
@@ -508,21 +502,22 @@ fn transformer(
         rmsnorm(state.xb.data, x, weights.rms_att_weight.data.offset(l * dim), dim)
 
         # QKV matmuls for this position
+        let loff = l * config.seq_len * dim
+
         tmpw.set_buf_ptr(weights.wq.data.offset(l * dim * dim), dim, dim)
         matmul(state.q, state.xb, tmpw, state.rt)
 
         tmpw.set_buf_ptr(weights.wk.data.offset(l * dim * dim), dim, dim)
-        matmul(state.k, state.xb, tmpw, state.rt)
+        matmul(state.key_cache, state.xb, tmpw, state.rt, loff + pos * dim)
 
         tmpw.set_buf_ptr(weights.wv.data.offset(l * dim * dim), dim, dim)
-        matmul(state.v, state.xb, tmpw, state.rt)
+        matmul(state.value_cache, state.xb, tmpw, state.rt, loff + pos * dim)
 
         # Apply RoPE rotation to the q and k vectors for each head
         for h in range(config.n_heads):
             # Get the q and k vectors for this head
             let q = state.q.data.offset(h * head_size)
-            let k = state.k.data.offset(h * head_size)
-
+            let k = state.key_cache.data.offset(loff + pos * dim + h * head_size)
             # Rotate q and k by the freq_cis_real and freq_cis_imag
             for i in range(0, head_size, 2):
                 let q0 = q.offset(i).load(0)
@@ -535,13 +530,6 @@ fn transformer(
                 q.offset(i + 1).store(0, q0 * fci + q1 * fcr)
                 k.offset(i).store(0, k0 * fcr - k1 * fci)
                 k.offset(i + 1).store(0, k0 * fci + k1 * fcr)
-
-        # Save key,value at this time step (pos) to our kv cache
-        let loff = l * config.seq_len * dim  # kv cache layer offset for convenience
-        let key_cache_row = state.key_cache.data.offset(loff + pos * dim)
-        let value_cache_row = state.value_cache.data.offset(loff + pos * dim)
-        memcpy[DType.float32](key_cache_row, state.k.data, config.dim)
-        memcpy[DType.float32](value_cache_row, state.v.data, config.dim)
 
         # Multihead attention. Iterate over all heads
         for h in range(config.n_heads):
