@@ -241,6 +241,8 @@ struct RunState:
     var hb: Matrix  # buffer for hidden dimension in the ffn (hidden_dim,)
     var hb2: Matrix  # buffer for hidden dimension in the ffn (hidden_dim,)
     var q: Matrix  # query (dim,)
+    var k: Matrix  # key (dim,)
+    var v: Matrix  # value (dim,)
     var att: Matrix  # buffer for scores/attention values (n_heads, seq_len)
     var logits: Matrix  # output logits
     var key_cache: Matrix  # (layer, seq_len, dim)
@@ -260,6 +262,8 @@ struct RunState:
         self.hb2.alloc_zero()
         self.q = Matrix(config.dim)
         self.q.alloc_zero()
+        self.k = Matrix(0,0)
+        self.v = Matrix(0,0)
         self.att = Matrix(config.n_heads, config.seq_len)
         self.att.alloc_zero()
         self.logits = Matrix(config.vocab_size)
@@ -487,7 +491,6 @@ fn transformer(
 
     # tmp matrix for matmul operations
     var tmpw = Matrix(0, 0)
-    var tmpkv = Matrix(0, 0)
 
     # Copy the token embedding into x
     let content_row = weights.token_embedding_table.data.offset(token * dim)
@@ -508,21 +511,19 @@ fn transformer(
         tmpw.set_buf_ptr(weights.wq.data.offset(l * dim * dim), dim, dim)
         matmul(state.q, state.xb, tmpw, state.rt)
 
-        # tmpkv = v
-        tmpkv.set_buf_ptr(state.value_cache.data.offset(loff + pos * dim), 1, dim)
-        tmpw.set_buf_ptr(weights.wv.data.offset(l * dim * dim), dim, dim)
-        matmul(tmpkv, state.xb, tmpw, state.rt)
-
-        # tmpkv = k
-        tmpkv.set_buf_ptr(state.key_cache.data.offset(loff + pos * dim), 1, dim)
+        state.k.set_buf_ptr(state.key_cache.data.offset(loff + pos * dim), 1, dim)
         tmpw.set_buf_ptr(weights.wk.data.offset(l * dim * dim), dim, dim)
-        matmul(tmpkv, state.xb, tmpw, state.rt)
+        matmul(state.k, state.xb, tmpw, state.rt)
+        
+        state.v.set_buf_ptr(state.value_cache.data.offset(loff + pos * dim), 1, dim)
+        tmpw.set_buf_ptr(weights.wv.data.offset(l * dim * dim), dim, dim)
+        matmul(state.v, state.xb, tmpw, state.rt)
 
         # Apply RoPE rotation to the q and k vectors for each head
         for h in range(config.n_heads):
             # Get the q and k vectors for this head
             let q = state.q.data.offset(h * head_size)
-            let k = tmpkv.data.offset(h * head_size)
+            let k = state.k.data.offset(h * head_size)
             # Rotate q and k by the freq_cis_real and freq_cis_imag
             for i in range(0, head_size, 2):
                 let q0 = q.offset(i).load(0)
