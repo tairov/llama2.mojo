@@ -528,10 +528,10 @@ fn transformer(
             let head_dim_half = i % head_size // 2
             let fcr = freq_cis_real_row.offset(head_dim_half).load(0)
             let fci = freq_cis_imag_row.offset(head_dim_half).load(0)
-            let q0 = state.q.data.offset(i).load(0)
-            let q1 = state.q.data.offset(i + 1).load(0)
-            let k0 = state.k.data.offset(i).load(0)
-            let k1 = state.k.data.offset(i + 1).load(0)
+            let q0 = q.offset(i).load(0)
+            let q1 = q.offset(i + 1).load(0)
+            let k0 = k.offset(i).load(0)
+            let k1 = k.data.offset(i + 1).load(0)
             q.offset(i).store(0, q0 * fcr - q1 * fci)
             q.offset(i + 1).store(0, q0 * fci + q1 * fcr)
             k.offset(i).store(0, k0 * fcr - k1 * fci)
@@ -541,8 +541,8 @@ fn transformer(
             let head_dim_half = i % head_size // 2
             let fcr = freq_cis_real_row.offset(head_dim_half).load(0)
             let fci = freq_cis_imag_row.offset(head_dim_half).load(0)
-            let q0 = state.q.data.offset(i).load(0)
-            let q1 = state.q.data.offset(i + 1).load(0)
+            let q0 = q.offset(i).load(0)
+            let q1 = q.offset(i + 1).load(0)
             q.offset(i).store(0, q0 * fcr - q1 * fci)
             q.offset(i + 1).store(0, q0 * fci + q1 * fcr)
 
