@@ -506,15 +506,14 @@ fn transformer(
         rmsnorm(state.xb.data, x, weights.rms_att_weight.data.offset(l * dim), dim)
 
         # QKV matmuls for this position
-        let loff = l * config.seq_len * dim
-
         tmpw.set_buf_ptr(weights.wq.data.offset(l * dim * dim), dim, dim)
         matmul(state.q, state.xb, tmpw, state.rt)
 
+        let loff = l * config.seq_len * dim
         state.k.set_buf_ptr(state.key_cache.data.offset(loff + pos * dim), 1, dim)
         tmpw.set_buf_ptr(weights.wk.data.offset(l * dim * dim), dim, dim)
         matmul(state.k, state.xb, tmpw, state.rt)
-        
+
         state.v.set_buf_ptr(state.value_cache.data.offset(loff + pos * dim), 1, dim)
         tmpw.set_buf_ptr(weights.wv.data.offset(l * dim * dim), dim, dim)
         matmul(state.v, state.xb, tmpw, state.rt)
@@ -524,6 +523,7 @@ fn transformer(
             # Get the q and k vectors for this head
             let q = state.q.data.offset(h * head_size)
             let k = state.k.data.offset(h * head_size)
+
             # Rotate q and k by the freq_cis_real and freq_cis_imag
             for i in range(0, head_size, 2):
                 let q0 = q.offset(i).load(0)
@@ -825,6 +825,7 @@ fn main() raises:
                 softmax(state.logits.data, config.vocab_size)
                 # Sample from this distribution to get the next token
                 next_token = sample(state.logits)
+
             # Finish generating when EOS, BOS appear
             if next_token == 1 or next_token == 2:
                 break
