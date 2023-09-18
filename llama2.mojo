@@ -531,7 +531,7 @@ fn transformer(
             let q0 = q.offset(i).load(0)
             let q1 = q.offset(i + 1).load(0)
             let k0 = k.offset(i).load(0)
-            let k1 = k.data.offset(i + 1).load(0)
+            let k1 = k.offset(i + 1).load(0)
             q.offset(i).store(0, q0 * fcr - q1 * fci)
             q.offset(i + 1).store(0, q0 * fci + q1 * fcr)
             k.offset(i).store(0, k0 * fcr - k1 * fci)
