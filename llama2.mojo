@@ -520,7 +520,6 @@ fn transformer(
         tmpw.set_buf_ptr(weights.wv.data.offset(l * dim * kv_dim), dim, kv_dim)
         matmul(state.v, state.xb, tmpw, state.rt)
 
-        
         # Apply RoPE rotation to the q and k vectors for each head
         let q = state.q.data
         let k = state.k.data
