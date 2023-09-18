@@ -270,9 +270,10 @@ struct RunState:
         self.att.alloc_zero()
         self.logits = Matrix(config.vocab_size)
         self.logits.alloc_zero()
-        self.key_cache = Matrix(config.n_layers, config.seq_len, config.dim)
+        let kv_dim = (config.n_kv_heads * config.dim) // config.n_heads
+        self.key_cache = Matrix(config.n_layers, config.seq_len, kv_dim)
         self.key_cache.alloc_zero()
-        self.value_cache = Matrix(config.n_layers, config.seq_len, config.dim)
+        self.value_cache = Matrix(config.n_layers, config.seq_len, kv_dim)
         self.value_cache.alloc_zero()
         self.rt = Runtime(num_cores() // 2)
 
@@ -490,6 +491,8 @@ fn transformer(
     let dim = config.dim
     let hidden_dim = config.hidden_dim
     let head_size = dim // config.n_heads
+    let kv_dim = (config.dim * config.n_kv_heads) // config.n_heads
+    let kv_mul = config.n_heads // config.n_kv_heads
 
     # tmp matrix for matmul operations
     var tmpw = Matrix(0, 0)
@@ -511,37 +514,44 @@ fn transformer(
         tmpw.set_buf_ptr(weights.wq.data.offset(l * dim * dim), dim, dim)
         matmul(state.q, state.xb, tmpw, state.rt)
 
-        tmpw.set_buf_ptr(weights.wk.data.offset(l * dim * dim), dim, dim)
+        tmpw.set_buf_ptr(weights.wk.data.offset(l * dim * kv_dim), dim, kv_dim)
         matmul(state.k, state.xb, tmpw, state.rt)
 
-        tmpw.set_buf_ptr(weights.wv.data.offset(l * dim * dim), dim, dim)
+        tmpw.set_buf_ptr(weights.wv.data.offset(l * dim * kv_dim), dim, kv_dim)
         matmul(state.v, state.xb, tmpw, state.rt)
 
+        
         # Apply RoPE rotation to the q and k vectors for each head
-        for h in range(config.n_heads):
-            # Get the q and k vectors for this head
-            let q = state.q.data.offset(h * head_size)
-            let k = state.k.data.offset(h * head_size)
+        let q = state.q.data
+        let k = state.k.data
+        for i in range(0, head_size * config.n_kv_heads, 2):
+            let head_dim_half = i % head_size // 2
+            let fcr = freq_cis_real_row.offset(head_dim_half).load(0)
+            let fci = freq_cis_imag_row.offset(head_dim_half).load(0)
+            let q0 = state.q.data.offset(i).load(0)
+            let q1 = state.q.data.offset(i + 1).load(0)
+            let k0 = state.k.data.offset(i).load(0)
+            let k1 = state.k.data.offset(i + 1).load(0)
+            q.offset(i).store(0, q0 * fcr - q1 * fci)
+            q.offset(i + 1).store(0, q0 * fci + q1 * fcr)
+            k.offset(i).store(0, k0 * fcr - k1 * fci)
+            k.offset(i + 1).store(0, k0 * fci + k1 * fcr)
 
-            # Rotate q and k by the freq_cis_real and freq_cis_imag
-            for i in range(0, head_size, 2):
-                let q0 = q.offset(i).load(0)
-                let q1 = q.offset(i + 1).load(0)
-                let k0 = k.offset(i).load(0)
-                let k1 = k.offset(i + 1).load(0)
-                let fcr = freq_cis_real_row.offset(i // 2).load(0)
-                let fci = freq_cis_imag_row.offset(i // 2).load(0)
-                q.offset(i).store(0, q0 * fcr - q1 * fci)
-                q.offset(i + 1).store(0, q0 * fci + q1 * fcr)
-                k.offset(i).store(0, k0 * fcr - k1 * fci)
-                k.offset(i + 1).store(0, k0 * fci + k1 * fcr)
+        for i in range(head_size * config.n_kv_heads, dim, 2):
+            let head_dim_half = i % head_size // 2
+            let fcr = freq_cis_real_row.offset(head_dim_half).load(0)
+            let fci = freq_cis_imag_row.offset(head_dim_half).load(0)
+            let q0 = state.q.data.offset(i).load(0)
+            let q1 = state.q.data.offset(i + 1).load(0)
+            q.offset(i).store(0, q0 * fcr - q1 * fci)
+            q.offset(i + 1).store(0, q0 * fci + q1 * fcr)
 
         # Save key,value at this time step (pos) to our kv cache
         let loff = l * config.seq_len * dim  # kv cache layer offset for convenience
-        let key_cache_row = state.key_cache.data.offset(loff + pos * dim)
-        let value_cache_row = state.value_cache.data.offset(loff + pos * dim)
-        memcpy[DType.float32](key_cache_row, state.k.data, config.dim)
-        memcpy[DType.float32](value_cache_row, state.v.data, config.dim)
+        let key_cache_row = state.key_cache.data.offset(loff + pos * kv_dim)
+        let value_cache_row = state.value_cache.data.offset(loff + pos * kv_dim)
+        memcpy[DType.float32](key_cache_row, state.k.data, kv_dim)
+        memcpy[DType.float32](value_cache_row, state.v.data, kv_dim)
 
         # Multihead attention. Iterate over all heads
         for h in range(config.n_heads):
@@ -554,7 +564,7 @@ fn transformer(
             # Iterate over all timesteps, including the current one
             for t in range(pos + 1):
                 # Get the key vector for this head and at this timestep
-                let k = state.key_cache.data.offset(loff + t * dim + h * head_size)
+                let k = state.key_cache.data.offset(loff + t * dim + (h // kv_mul) * head_size)
                 # Calculate the attention score as the dot product of q and k
                 var score: Float32 = 0.0
                 for i in range(head_size):
@@ -572,7 +582,7 @@ fn transformer(
             memset_zero(xb, head_size)
             for t in range(pos + 1):
                 # Get the value vector for this head and at this timestep
-                let v = state.value_cache.data.offset(loff + t * dim + h * head_size)
+                let v = state.value_cache.data.offset(loff + t * dim + (h // kv_mul) * head_size)
                 # Get the attention weight for this timestep
                 let a = att.offset(t).load(0)
                 # Accumulate the weighted value into xb
