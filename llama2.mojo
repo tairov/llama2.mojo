@@ -217,12 +217,15 @@ struct Tokenizer:
 
 struct Config:
     var dim: Int
+    var kv_dim: Int
     var hidden_dim: Int
     var n_layers: Int
     var n_heads: Int
     var n_kv_heads: Int
+    var kv_mul: Int
     var vocab_size: Int
     var seq_len: Int
+    var head_size: Int
 
     fn __init__(inout self):
         self.dim = 0
@@ -232,6 +235,9 @@ struct Config:
         self.n_kv_heads = 0
         self.vocab_size = 0
         self.seq_len = 0
+        self.kv_dim = 0
+        self.kv_mul = 0
+        self.head_size = 0
 
 
 struct RunState:
@@ -241,8 +247,8 @@ struct RunState:
     var hb: Matrix  # buffer for hidden dimension in the ffn (hidden_dim,)
     var hb2: Matrix  # buffer for hidden dimension in the ffn (hidden_dim,)
     var q: Matrix  # query (dim,)
-    var k: Matrix  # key (dim,)
-    var v: Matrix  # value (dim,)
+    var k: Matrix  # key (kv_dim,)
+    var v: Matrix  # value (kv_dim,)
     var att: Matrix  # buffer for scores/attention values (n_heads, seq_len)
     var logits: Matrix  # output logits
     var key_cache: Matrix  # (layer, seq_len, dim)
@@ -262,15 +268,15 @@ struct RunState:
         self.hb2.alloc_zero()
         self.q = Matrix(config.dim)
         self.q.alloc_zero()
-        self.k = Matrix(0,0)
-        self.v = Matrix(0,0)
+        self.k = Matrix(0, 0)
+        self.v = Matrix(0, 0)
         self.att = Matrix(config.n_heads, config.seq_len)
         self.att.alloc_zero()
         self.logits = Matrix(config.vocab_size)
         self.logits.alloc_zero()
-        self.key_cache = Matrix(config.n_layers, config.seq_len, config.dim)
+        self.key_cache = Matrix(config.n_layers, config.seq_len, config.kv_dim)
         self.key_cache.alloc_zero()
-        self.value_cache = Matrix(config.n_layers, config.seq_len, config.dim)
+        self.value_cache = Matrix(config.n_layers, config.seq_len, config.kv_dim)
         self.value_cache.alloc_zero()
         self.rt = Runtime(num_cores() // 2)
 
@@ -303,9 +309,9 @@ struct TransformerWeights:
         )
         self.wq = Matrix(config.n_layers, config.dim, config.dim)
         self.wq.set_buf_ptr(buf.bitcast_offset_float32(self.wq.size()))
-        self.wk = Matrix(config.n_layers, config.dim, config.dim)
+        self.wk = Matrix(config.n_layers, config.dim, config.kv_dim)
         self.wk.set_buf_ptr(buf.bitcast_offset_float32(self.wk.size()))
-        self.wv = Matrix(config.n_layers, config.dim, config.dim)
+        self.wv = Matrix(config.n_layers, config.dim, config.kv_dim)
         self.wv.set_buf_ptr(buf.bitcast_offset_float32(self.wv.size()))
         self.wo = Matrix(config.n_layers, config.dim, config.dim)
         self.wo.set_buf_ptr(buf.bitcast_offset_float32(self.wo.size()))
@@ -367,6 +373,9 @@ fn config_init(inout config: Config, inout buf: FileBuf) raises:
     config.n_kv_heads = read_val_int(buf)
     config.vocab_size = read_val_int(buf)
     config.seq_len = read_val_int(buf)
+    config.head_size = config.dim // config.n_heads
+    config.kv_dim = (config.n_kv_heads * config.dim) // config.n_heads
+    config.kv_mul = config.n_heads // config.n_kv_heads
     return None
 
 
@@ -487,7 +496,9 @@ fn transformer(
     var x = state.x.data
     let dim = config.dim
     let hidden_dim = config.hidden_dim
-    let head_size = dim // config.n_heads
+    let head_size = config.head_size
+    let kv_dim = config.kv_dim
+    let kv_mul = config.kv_mul
 
     # tmp matrix for matmul operations
     var tmpw = Matrix(0, 0)
@@ -509,33 +520,39 @@ fn transformer(
         tmpw.set_buf_ptr(weights.wq.data.offset(l * dim * dim), dim, dim)
         matmul(state.q, state.xb, tmpw, state.rt)
 
-        let loff = l * config.seq_len * dim
-        state.k.set_buf_ptr(state.key_cache.data.offset(loff + pos * dim), 1, dim)
-        tmpw.set_buf_ptr(weights.wk.data.offset(l * dim * dim), dim, dim)
+        let loff = l * config.seq_len * kv_dim
+        state.k.set_buf_ptr(state.key_cache.data.offset(loff + pos * kv_dim), 1, kv_dim)
+        tmpw.set_buf_ptr(weights.wk.data.offset(l * dim * kv_dim), kv_dim, dim)
         matmul(state.k, state.xb, tmpw, state.rt)
 
-        state.v.set_buf_ptr(state.value_cache.data.offset(loff + pos * dim), 1, dim)
-        tmpw.set_buf_ptr(weights.wv.data.offset(l * dim * dim), dim, dim)
+        state.v.set_buf_ptr(state.value_cache.data.offset(loff + pos * kv_dim), 1, kv_dim)
+        tmpw.set_buf_ptr(weights.wv.data.offset(l * dim * kv_dim), kv_dim, dim)
         matmul(state.v, state.xb, tmpw, state.rt)
 
         # Apply RoPE rotation to the q and k vectors for each head
-        for h in range(config.n_heads):
-            # Get the q and k vectors for this head
-            let q = state.q.data.offset(h * head_size)
-            let k = state.k.data.offset(h * head_size)
+        let q = state.q.data
+        let k = state.k.data
+        for i in range(0, head_size * config.n_kv_heads, 2):
+            let head_dim_half = i % head_size // 2
+            let fcr = freq_cis_real_row.offset(head_dim_half).load(0)
+            let fci = freq_cis_imag_row.offset(head_dim_half).load(0)
+            let q0 = q.offset(i).load(0)
+            let q1 = q.offset(i + 1).load(0)
+            let k0 = k.offset(i).load(0)
+            let k1 = k.offset(i + 1).load(0)
+            q.offset(i).store(0, q0 * fcr - q1 * fci)
+            q.offset(i + 1).store(0, q0 * fci + q1 * fcr)
+            k.offset(i).store(0, k0 * fcr - k1 * fci)
+            k.offset(i + 1).store(0, k0 * fci + k1 * fcr)
 
-            # Rotate q and k by the freq_cis_real and freq_cis_imag
-            for i in range(0, head_size, 2):
-                let q0 = q.offset(i).load(0)
-                let q1 = q.offset(i + 1).load(0)
-                let k0 = k.offset(i).load(0)
-                let k1 = k.offset(i + 1).load(0)
-                let fcr = freq_cis_real_row.offset(i // 2).load(0)
-                let fci = freq_cis_imag_row.offset(i // 2).load(0)
-                q.offset(i).store(0, q0 * fcr - q1 * fci)
-                q.offset(i + 1).store(0, q0 * fci + q1 * fcr)
-                k.offset(i).store(0, k0 * fcr - k1 * fci)
-                k.offset(i + 1).store(0, k0 * fci + k1 * fcr)
+        for i in range(head_size * config.n_kv_heads, dim, 2):
+            let head_dim_half = i % head_size // 2
+            let fcr = freq_cis_real_row.offset(head_dim_half).load(0)
+            let fci = freq_cis_imag_row.offset(head_dim_half).load(0)
+            let q0 = q.offset(i).load(0)
+            let q1 = q.offset(i + 1).load(0)
+            q.offset(i).store(0, q0 * fcr - q1 * fci)
+            q.offset(i + 1).store(0, q0 * fci + q1 * fcr)
 
         # Multihead attention. Iterate over all heads
         for h in range(config.n_heads):
@@ -548,7 +565,7 @@ fn transformer(
             # Iterate over all timesteps, including the current one
             for t in range(pos + 1):
                 # Get the key vector for this head and at this timestep
-                let k = state.key_cache.data.offset(loff + t * dim + h * head_size)
+                let k = state.key_cache.data.offset(loff + t * kv_dim + (h // kv_mul) * head_size)
                 # Calculate the attention score as the dot product of q and k
                 var score: Float32 = 0.0
                 for i in range(head_size):
@@ -566,7 +583,7 @@ fn transformer(
             memset_zero(xb, head_size)
             for t in range(pos + 1):
                 # Get the value vector for this head and at this timestep
-                let v = state.value_cache.data.offset(loff + t * dim + h * head_size)
+                let v = state.value_cache.data.offset(loff + t * kv_dim + (h // kv_mul) * head_size)
                 # Get the attention weight for this timestep
                 let a = att.offset(t).load(0)
                 # Accumulate the weighted value into xb
@@ -692,7 +709,20 @@ fn bpe_encode(inout tokens: DynamicVector[Int], text: String, tok: Tokenizer):
         tokens = _tokens
 
 
+fn str2num(d: Int) -> Int:
+    # covert Hex to decimal
+    if d >= ord('A'):
+        return d - ord('A') + 10
+    return d - ord('0')
+        
+
 fn print_str(s: PointerString):
+    # print raw byte like <0x0A>
+    if (s[1].to_int() == ord('0')) and (s[2].to_int() == ord('x')):
+        let d1: Int = s[3].to_int()
+        let d2: Int = s[4].to_int()
+        print_no_newline(chr(str2num(d1)*16+str2num(d2)))
+        return
     # print all chars till null character
     var p: Int = 0
     while s[p].to_int() != 0:
@@ -739,6 +769,8 @@ fn main() raises:
                 print("Option not supported: ", args[i])
             if args[i] == "-n":
                 steps = atol(args[i + 1])
+            if args[i] == "-tk":
+                tokenizer = args[i + 1]
             if args[i] == "-s":
                 rng_seed = atol(args[i + 1])
             if args[i] == "-i":
