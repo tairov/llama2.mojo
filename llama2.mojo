@@ -493,7 +493,6 @@ fn transformer(
     let kv_dim = (config.dim * config.n_kv_heads) // config.n_heads
     let kv_mul = config.n_heads // config.n_kv_heads
 
-
     # tmp matrix for matmul operations
     var tmpw = Matrix(0, 0)
 
@@ -703,7 +702,20 @@ fn bpe_encode(inout tokens: DynamicVector[Int], text: String, tok: Tokenizer):
         tokens = _tokens
 
 
+fn str2num(d: Int) -> Int:
+    # covert Hex to decimal
+    if d >= ord('A'):
+        return d - ord('A') + 10
+    return d - ord('0')
+        
+
 fn print_str(s: PointerString):
+    # print raw byte like <0x0A>
+    if (s[1].to_int() == ord('0')) and (s[2].to_int() == ord('x')):
+        let d1: Int = s[3].to_int()
+        let d2: Int = s[4].to_int()
+        print_no_newline(chr(str2num(d1)*16+str2num(d2)))
+        return
     # print all chars till null character
     var p: Int = 0
     while s[p].to_int() != 0:
