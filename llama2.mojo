@@ -262,8 +262,8 @@ struct RunState:
         self.hb2.alloc_zero()
         self.q = Matrix(config.dim)
         self.q.alloc_zero()
-        self.k = Matrix(0,0)
-        self.v = Matrix(0,0)
+        self.k = Matrix(0, 0)
+        self.v = Matrix(0, 0)
         self.att = Matrix(config.n_heads, config.seq_len)
         self.att.alloc_zero()
         self.logits = Matrix(config.vocab_size)
@@ -516,7 +516,7 @@ fn transformer(
         state.k.set_buf_ptr(state.key_cache.data.offset(loff + pos * kv_dim), 1, kv_dim)
         tmpw.set_buf_ptr(weights.wk.data.offset(l * dim * kv_dim), dim, kv_dim)
         matmul(state.k, state.xb, tmpw, state.rt)
-        
+
         state.v.set_buf_ptr(state.value_cache.data.offset(loff + pos * kv_dim), 1, kv_dim)
         tmpw.set_buf_ptr(weights.wv.data.offset(l * dim * kv_dim), dim, kv_dim)
         matmul(state.v, state.xb, tmpw, state.rt)
