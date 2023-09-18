@@ -217,12 +217,15 @@ struct Tokenizer:
 
 struct Config:
     var dim: Int
+    var kv_dim: Int
     var hidden_dim: Int
     var n_layers: Int
     var n_heads: Int
     var n_kv_heads: Int
+    var kv_mul: Int
     var vocab_size: Int
     var seq_len: Int
+    var head_size: Int
 
     fn __init__(inout self):
         self.dim = 0
@@ -232,6 +235,9 @@ struct Config:
         self.n_kv_heads = 0
         self.vocab_size = 0
         self.seq_len = 0
+        self.kv_dim = 0
+        self.kv_mul = 0
+        self.head_size = 0
 
 
 struct RunState:
@@ -268,10 +274,9 @@ struct RunState:
         self.att.alloc_zero()
         self.logits = Matrix(config.vocab_size)
         self.logits.alloc_zero()
-        let kv_dim = (config.n_kv_heads * config.dim) // config.n_heads
-        self.key_cache = Matrix(config.n_layers, config.seq_len, kv_dim)
+        self.key_cache = Matrix(config.n_layers, config.seq_len, config.kv_dim)
         self.key_cache.alloc_zero()
-        self.value_cache = Matrix(config.n_layers, config.seq_len, kv_dim)
+        self.value_cache = Matrix(config.n_layers, config.seq_len, config.kv_dim)
         self.value_cache.alloc_zero()
         self.rt = Runtime(num_cores() // 2)
 
@@ -293,7 +298,6 @@ struct TransformerWeights:
     var wcls: Matrix
 
     fn __init__(inout self, config: Config, shared_weights: Int, inout buf: FileBuf):
-        let kv_dim = (config.n_kv_heads * config.dim) // config.n_heads
         self.token_embedding_table = Matrix(config.vocab_size, config.dim)
         # set buf ptr to buf data from file
         self.token_embedding_table.set_buf_ptr(
@@ -305,9 +309,9 @@ struct TransformerWeights:
         )
         self.wq = Matrix(config.n_layers, config.dim, config.dim)
         self.wq.set_buf_ptr(buf.bitcast_offset_float32(self.wq.size()))
-        self.wk = Matrix(config.n_layers, config.dim, kv_dim)
+        self.wk = Matrix(config.n_layers, config.dim, config.kv_dim)
         self.wk.set_buf_ptr(buf.bitcast_offset_float32(self.wk.size()))
-        self.wv = Matrix(config.n_layers, config.dim, kv_dim)
+        self.wv = Matrix(config.n_layers, config.dim, config.kv_dim)
         self.wv.set_buf_ptr(buf.bitcast_offset_float32(self.wv.size()))
         self.wo = Matrix(config.n_layers, config.dim, config.dim)
         self.wo.set_buf_ptr(buf.bitcast_offset_float32(self.wo.size()))
@@ -369,6 +373,9 @@ fn config_init(inout config: Config, inout buf: FileBuf) raises:
     config.n_kv_heads = read_val_int(buf)
     config.vocab_size = read_val_int(buf)
     config.seq_len = read_val_int(buf)
+    config.head_size = config.dim // config.n_heads
+    config.kv_dim = (config.n_kv_heads * config.dim) // config.n_heads
+    config.kv_mul = config.n_heads // config.n_kv_heads
     return None
 
 
@@ -489,9 +496,9 @@ fn transformer(
     var x = state.x.data
     let dim = config.dim
     let hidden_dim = config.hidden_dim
-    let head_size = dim // config.n_heads
-    let kv_dim = (config.dim * config.n_kv_heads) // config.n_heads
-    let kv_mul = config.n_heads // config.n_kv_heads
+    let head_size = config.head_size
+    let kv_dim = config.kv_dim
+    let kv_mul = config.kv_mul
 
     # tmp matrix for matmul operations
     var tmpw = Matrix(0, 0)
