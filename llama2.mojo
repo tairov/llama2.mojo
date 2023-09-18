@@ -262,10 +262,8 @@ struct RunState:
         self.hb2.alloc_zero()
         self.q = Matrix(config.dim)
         self.q.alloc_zero()
-        self.k = Matrix(config.dim)
-        self.k.alloc_zero()
-        self.v = Matrix(config.dim)
-        self.v.alloc_zero()
+        self.k = Matrix(0,0)
+        self.v = Matrix(0,0)
         self.att = Matrix(config.n_heads, config.seq_len)
         self.att.alloc_zero()
         self.logits = Matrix(config.vocab_size)
@@ -511,9 +509,12 @@ fn transformer(
         tmpw.set_buf_ptr(weights.wq.data.offset(l * dim * dim), dim, dim)
         matmul(state.q, state.xb, tmpw, state.rt)
 
+        let loff = l * config.seq_len * dim
+        state.k.set_buf_ptr(state.key_cache.data.offset(loff + pos * dim), 1, dim)
         tmpw.set_buf_ptr(weights.wk.data.offset(l * dim * dim), dim, dim)
         matmul(state.k, state.xb, tmpw, state.rt)
 
+        state.v.set_buf_ptr(state.value_cache.data.offset(loff + pos * dim), 1, dim)
         tmpw.set_buf_ptr(weights.wv.data.offset(l * dim * dim), dim, dim)
         matmul(state.v, state.xb, tmpw, state.rt)
 
@@ -535,13 +536,6 @@ fn transformer(
                 q.offset(i + 1).store(0, q0 * fci + q1 * fcr)
                 k.offset(i).store(0, k0 * fcr - k1 * fci)
                 k.offset(i + 1).store(0, k0 * fci + k1 * fcr)
-
-        # Save key,value at this time step (pos) to our kv cache
-        let loff = l * config.seq_len * dim  # kv cache layer offset for convenience
-        let key_cache_row = state.key_cache.data.offset(loff + pos * dim)
-        let value_cache_row = state.value_cache.data.offset(loff + pos * dim)
-        memcpy[DType.float32](key_cache_row, state.k.data, config.dim)
-        memcpy[DType.float32](value_cache_row, state.v.data, config.dim)
 
         # Multihead attention. Iterate over all heads
         for h in range(config.n_heads):
@@ -832,6 +826,9 @@ fn main() raises:
                 # Sample from this distribution to get the next token
                 next_token = sample(state.logits)
 
+            # Finish generating when EOS, BOS appear
+            if next_token == 1 or next_token == 2:
+                break
         var token_str: PointerString = tok.vocab[next_token]
         if token == 1 and token_str[0] == ord(" "):
             token_str = token_str.offset(1)
@@ -846,4 +843,4 @@ fn main() raises:
             start = time_in_ms()
 
     let end = time_in_ms()
-    print("\nachieved tok/s: ", (steps - 1) / (end - start) * 1000)
+    print("\nachieved tok/s: ", (pos - 1) / (end - start) * 1000)
