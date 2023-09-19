@@ -390,7 +390,6 @@ fn tokenizer_init(inout tok: Tokenizer, inout buf: FileBuf) -> None:
         let slen = read_val_int(buf)
         tok.vocab.store(i, read_val_str(buf, slen))
 
-    tok.vocab_scores = buf.data.offset(buf.offset).bitcast[DType.float32]()
     buf.offset += tok.vocab_size * 4
     return None
 
