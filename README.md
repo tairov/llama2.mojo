@@ -106,6 +106,25 @@ With Gradio UI:
 docker run -it -p 0.0.0.0:7860:7860 llama2.mojo
 ``` 
 
+## Citing llama2.🔥
+
+If you use or discuss llama2.mojo in your academic research, please cite the project to help spread awareness:
+
+```
+@misc{llama2.mojo,
+  author = {Aydyn Tairov}, 
+  title = {Inference Llama2 in one file of pure Mojo},
+  year = {2023},
+  month = {09},
+  howpublished = {\url{https://github.com/tairov/llama2.mojo}},
+  note = {Llama2 Mojo, MIT License}
+}
+```
+
+We kindly request that you include a link to the GitHub repository in published papers. This will allow interested readers to easily find the latest updates and extensions to the project.
+
+`llama2.mojo` aims to encourage academic research on efficient implementations of transformer architectures, the `llama` model, and applications of the `mojo` programming language. Citing the project helps growth of the knowledge community around these topics. We appreciate your support through referencing `llama2.mojo`!
+
 ## License
 
 MIT
