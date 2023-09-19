@@ -525,7 +525,9 @@ fn transformer(
         tmpw.set_buf_ptr(weights.wk.data.offset(l * dim * kv_dim), kv_dim, dim)
         matmul(state.k, state.xb, tmpw, state.rt)
 
-        state.v.set_buf_ptr(state.value_cache.data.offset(loff + pos * kv_dim), 1, kv_dim)
+        state.v.set_buf_ptr(
+            state.value_cache.data.offset(loff + pos * kv_dim), 1, kv_dim
+        )
         tmpw.set_buf_ptr(weights.wv.data.offset(l * dim * kv_dim), kv_dim, dim)
         matmul(state.v, state.xb, tmpw, state.rt)
 
@@ -565,7 +567,9 @@ fn transformer(
             # Iterate over all timesteps, including the current one
             for t in range(pos + 1):
                 # Get the key vector for this head and at this timestep
-                let k = state.key_cache.data.offset(loff + t * kv_dim + (h // kv_mul) * head_size)
+                let k = state.key_cache.data.offset(
+                    loff + t * kv_dim + (h // kv_mul) * head_size
+                )
                 # Calculate the attention score as the dot product of q and k
                 var score: Float32 = 0.0
                 for i in range(head_size):
@@ -583,7 +587,9 @@ fn transformer(
             memset_zero(xb, head_size)
             for t in range(pos + 1):
                 # Get the value vector for this head and at this timestep
-                let v = state.value_cache.data.offset(loff + t * kv_dim + (h // kv_mul) * head_size)
+                let v = state.value_cache.data.offset(
+                    loff + t * kv_dim + (h // kv_mul) * head_size
+                )
                 # Get the attention weight for this timestep
                 let a = att.offset(t).load(0)
                 # Accumulate the weighted value into xb
@@ -711,17 +717,17 @@ fn bpe_encode(inout tokens: DynamicVector[Int], text: String, tok: Tokenizer):
 
 fn str2num(d: Int) -> Int:
     # covert Hex to decimal
-    if d >= ord('A'):
-        return d - ord('A') + 10
-    return d - ord('0')
-        
+    if d >= ord("A"):
+        return d - ord("A") + 10
+    return d - ord("0")
+
 
 fn print_str(s: PointerString):
     # print raw byte like <0x0A>
-    if (s[1].to_int() == ord('0')) and (s[2].to_int() == ord('x')):
+    if (s[1].to_int() == ord("0")) and (s[2].to_int() == ord("x")):
         let d1: Int = s[3].to_int()
         let d2: Int = s[4].to_int()
-        print_no_newline(chr(str2num(d1)*16+str2num(d2)))
+        print_no_newline(chr(str2num(d1) * 16 + str2num(d2)))
         return
     # print all chars till null character
     var p: Int = 0
@@ -801,7 +807,7 @@ fn main() raises:
     var config: Config = Config()
 
     read_file(checkpoint, fbuf)
-    print("checkpoint size: ", fbuf.size)
+    print("checkpoint size: ", fbuf.size, "[", fbuf.size // 1024 // 1024, "MB ]")
     config_init(config, fbuf)
 
     # negative vocab size is hacky way of signaling unshared weights. bit yikes.
