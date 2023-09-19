@@ -125,6 +125,6 @@ We kindly request that you include a link to the GitHub repository in published 
 
 `llama2.mojo` aims to encourage academic research on efficient implementations of transformer architectures, the `llama` model, and applications of the `mojo` programming language. Citing the project helps growth of the knowledge community around these topics. We appreciate your support through referencing `llama2.mojo`!
 
-## License
+## license
 
 MIT
