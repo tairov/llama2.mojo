@@ -25,7 +25,7 @@ Further researches of both solutions in parallelized mode compilation showed tha
 I'm still investigating in this direction since not all the possible optimizations were applied to the Mojo version so
 far.
 
-### comparison
+### benchmarking
 
 #### OS/HW specs
 
@@ -73,7 +73,7 @@ Then, just run the Mojo
 mojo llama2.mojo stories15M.bin -s 100 -n 256 -t 0.5 -i "Llama is an animal"
 ```
 
-**Example output**
+**example output**
 
 ```
 num hardware threads:  6
@@ -92,7 +92,7 @@ Lily said,
 achieved tok/s:  359.66149506346966
 ```
 
-## Running via Docker
+## running via Docker
 
 ```bash
 docker build -t llama2.mojo .
@@ -106,7 +106,7 @@ With Gradio UI:
 docker run -it -p 0.0.0.0:7860:7860 llama2.mojo
 ``` 
 
-## Citing llama2.🔥
+## citing llama2.🔥
 
 If you use or discuss llama2.mojo in your academic research, please cite the project to help spread awareness:
 
