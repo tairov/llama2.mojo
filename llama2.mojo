@@ -183,6 +183,63 @@ fn str_to_ptr(s: String) -> PointerString:
     return ret
 
 
+fn string_compare(a: PointerString, b: PointerString) -> Int:
+    var index = 0
+    while a[index] != 0 and b[index] != 0:
+        if a[index] < b[index]:
+            return -1
+        if a[index] > b[index]:
+            return 1
+
+        index += 1
+
+    if a[index] != 0 and b[index] == 0:
+        return 1
+
+    if a[index] == 0 and b[index] != 0:
+        return -1
+
+    return 0
+
+
+# Quicksort helper function to find the partition position
+fn partition(
+    inout array: PointerStrings, inout indices: DynamicVector[Int], low: Int, high: Int
+) -> Int:
+    let pivot = array[high]
+    var ii = low - 1
+    for jj in range(low, high):
+        if string_compare(pivot, array[jj]) == 1:
+            # If element smaller than pivot, swap
+            ii = ii + 1
+
+            let tmp = array[ii]
+            let tmp_idx = indices[ii]
+            array.store(ii, array[jj])
+            indices[ii] = indices[jj]
+            array.store(jj, tmp)
+            indices[jj] = tmp_idx
+
+    # Swap the pivot element
+    let tmp = array[ii + 1]
+    let tmp_idx = indices[ii + 1]
+    array.store(ii + 1, array[high])
+    indices[ii + 1] = indices[high]
+    array.store(high, tmp)
+    indices[high] = tmp_idx
+
+    return ii + 1
+
+
+fn quicksort(
+    inout array: PointerStrings, inout indices: DynamicVector[Int], low: Int, high: Int
+):
+    if low < high:
+        let pi = partition(array, indices, low, high)
+        quicksort(array, indices, low, pi - 1)
+        quicksort(array, indices, pi + 1, high)
+
+
 struct FileBuf:
     var data: BufferPtrType
     var offset: Int
@@ -207,12 +264,56 @@ struct Tokenizer:
     var vocab_scores: BufferPtrFloat32
     var max_token_length: Int
     var vocab_size: Int
+    var sorted_vocab: PointerStrings
+    var sorted_indices: DynamicVector[Int]
 
-    fn __init__(inout self, vocab_size: Int):
+    fn __init__(inout self, vocab_size: Int, inout buf: FileBuf) -> None:
         self.vocab_size = vocab_size
-        self.vocab = PointerStrings.alloc(vocab_size)
-        self.vocab_scores = BufferPtrFloat32.alloc(vocab_size)
-        self.max_token_length = 0
+        self.max_token_length = read_val_int(buf)
+        self.vocab_scores = BufferPtrFloat32.alloc(self.vocab_size)
+        self.vocab = PointerStrings.alloc(self.vocab_size)
+        # lazy load sorted vocab
+        self.sorted_vocab = PointerStrings.alloc(0)
+        self.sorted_indices = DynamicVector[Int](0)
+
+        # read vocab_scores & vocab values (tokens)
+        for i in range(0, self.vocab_size):
+            self.vocab_scores.store(i, read_val_float32(buf))
+            let slen = read_val_int(buf)
+            self.vocab.store(i, read_val_str(buf, slen))
+
+        return None
+
+    # sort vocab by string_compare
+    fn sort(inout self) -> None:
+        if len(self.sorted_indices) < self.vocab_size:
+            self.sorted_indices = DynamicVector[Int](self.vocab_size)
+            self.sorted_vocab = PointerStrings.alloc(self.vocab_size)
+            for ii in range(self.vocab_size):
+                self.sorted_vocab.store(ii, self.vocab[ii])
+                self.sorted_indices.push_back(ii)
+
+        let n = self.vocab_size
+        quicksort(self.sorted_vocab, self.sorted_indices, 0, n - 1)
+        return None
+
+    # Binary search that returns -1 if string is not found
+    fn find(inout self, token: PointerString) -> Int:
+        let n = self.vocab_size
+        if len(self.sorted_indices) < n:
+            self.sort()
+        var left = 0
+        var right = n - 1
+        while left <= right:
+            let mid = left + (right - left) // 2
+            let comparison = string_compare(self.sorted_vocab[mid], token)
+            if comparison == 0:
+                return self.sorted_indices[mid]
+            if comparison < 0:
+                left = mid + 1
+            else:
+                right = mid - 1
+        return -1
 
 
 struct Config:
@@ -376,20 +477,6 @@ fn config_init(inout config: Config, inout buf: FileBuf) raises:
     config.head_size = config.dim // config.n_heads
     config.kv_dim = (config.n_kv_heads * config.dim) // config.n_heads
     config.kv_mul = config.n_heads // config.n_kv_heads
-    return None
-
-
-fn tokenizer_init(inout tok: Tokenizer, inout buf: FileBuf) -> None:
-    tok.max_token_length = read_val_int(buf)
-    tok.vocab_scores = BufferPtrFloat32.alloc(tok.vocab_size)
-    tok.vocab = PointerStrings.alloc(tok.vocab_size)
-
-    # read vocab_scores & vocab values (tokens)
-    for i in range(0, tok.vocab_size):
-        tok.vocab_scores.store(i, read_val_float32(buf))
-        let slen = read_val_int(buf)
-        tok.vocab.store(i, read_val_str(buf, slen))
-
     return None
 
 
@@ -660,24 +747,10 @@ fn sample(probabilities: Matrix) -> Int:
     return n - 1  # In case of rounding errors
 
 
-fn str_lookup(str: PointerString, tok: Tokenizer) -> Int:
-    for pos in range(tok.vocab_size):
-        let s1 = tok.vocab[pos]
-        var p1 = 0
-        while s1[p1] != 0 and str[p1] != 0:
-            if s1[p1] != str[p1]:
-                break
-            p1 += 1
-        if s1[p1] != 0 or str[p1] != 0:
-            continue
-        return pos
-    return -1
-
-
-fn bpe_encode(inout tokens: DynamicVector[Int], text: String, tok: Tokenizer):
+fn bpe_encode(inout tokens: DynamicVector[Int], text: String, inout tok: Tokenizer):
     for pos in range(len(text)):
         let char = str_to_ptr(text[pos])
-        let id = str_lookup(char, tok)
+        let id = tok.find(char)
 
         if id == -1:
             print("Not a good prompt token at pos ", pos)
@@ -692,7 +765,7 @@ fn bpe_encode(inout tokens: DynamicVector[Int], text: String, tok: Tokenizer):
         for i in range(len(tokens) - 1):
             # Check if we can merge the pair (tokens[i], tokens[i+1])
             let str = str_concat(tok.vocab[tokens[i]], tok.vocab[tokens[i + 1]])
-            let id = str_lookup(str, tok)
+            let id = tok.find(str)
             if id != -1 and tok.vocab_scores.load(id) > best_score:
                 best_score = tok.vocab_scores.load(id)
                 best_id = id
@@ -816,14 +889,12 @@ fn main() raises:
 
     let weights: TransformerWeights = TransformerWeights(config, shared_weights, fbuf)
 
-    var tok: Tokenizer = Tokenizer(config.vocab_size)
-
     if steps <= 0 or steps > config.seq_len:
         steps = config.seq_len
 
     # Read in the tokenizer.bin file
     read_file(tokenizer, tbuf)
-    tokenizer_init(tok, tbuf)
+    var tok = Tokenizer(config.vocab_size, tbuf)
 
     # Create and initialize the application RunState
     var state = RunState(config)
