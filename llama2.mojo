@@ -95,7 +95,7 @@ struct FileBuf:
 
     fn bitcast_offset_f32(inout self, size: Int) -> BufferPtrFloat32:
         let ret = self.data.offset(self.offset).bitcast[DType.float32]()
-        self.offset += size * sizeof[DType.float32]()
+        self.move_offset(size * sizeof[DType.float32]())
         return ret
 
 
@@ -187,41 +187,45 @@ struct TransformerWeights:
         var tspec = get_tspec_f32(config.vocab_size, config.dim)
         # __init__(owned ptr: DTypePointer[dtype], owned spec: TensorSpec)
         self.token_embedding_table = TensorF32(
-            buf.bitcast_offset_f32(tspec.bytecount()), tspec
+            buf.bitcast_offset_f32(tspec.num_elements()), tspec
         )
         # set buf ptr to buf data from file
         tspec = get_tspec_f32(config.n_layers, config.dim)
         self.rms_att_weight = TensorF32(
-            buf.bitcast_offset_f32(tspec.bytecount()), tspec
+            buf.bitcast_offset_f32(tspec.num_elements()), tspec
         )
         tspec = get_tspec_f32(config.n_layers, config.dim, config.dim)
-        self.wq = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        self.wq = TensorF32(buf.bitcast_offset_f32(tspec.num_elements()), tspec)
         tspec = get_tspec_f32(config.n_layers, config.dim, config.dim)
-        self.wk = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        self.wk = TensorF32(buf.bitcast_offset_f32(tspec.num_elements()), tspec)
         tspec = get_tspec_f32(config.n_layers, config.dim, config.dim)
-        self.wv = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        self.wv = TensorF32(buf.bitcast_offset_f32(tspec.num_elements()), tspec)
         tspec = get_tspec_f32(config.n_layers, config.dim, config.dim)
-        self.wo = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        self.wo = TensorF32(buf.bitcast_offset_f32(tspec.num_elements()), tspec)
         tspec = get_tspec_f32(config.n_layers, config.dim)
         self.rms_ffn_weight = TensorF32(
-            buf.bitcast_offset_f32(tspec.bytecount()), tspec
+            buf.bitcast_offset_f32(tspec.num_elements()), tspec
         )
         tspec = get_tspec_f32(config.n_layers, config.dim, config.hidden_dim)
-        self.w1 = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        self.w1 = TensorF32(buf.bitcast_offset_f32(tspec.num_elements()), tspec)
         tspec = get_tspec_f32(config.n_layers, config.dim, config.hidden_dim)
-        self.w2 = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        self.w2 = TensorF32(buf.bitcast_offset_f32(tspec.num_elements()), tspec)
         tspec = get_tspec_f32(config.n_layers, config.dim, config.hidden_dim)
-        self.w3 = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        self.w3 = TensorF32(buf.bitcast_offset_f32(tspec.num_elements()), tspec)
         tspec = get_tspec_f32(config.dim)
         self.rms_final_weight = TensorF32(
-            buf.bitcast_offset_f32(tspec.bytecount()), tspec
+            buf.bitcast_offset_f32(tspec.num_elements()), tspec
         )
         tspec = get_tspec_f32(config.seq_len, (config.dim // config.n_heads) // 2)
-        self.freq_cis_real = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        self.freq_cis_real = TensorF32(
+            buf.bitcast_offset_f32(tspec.num_elements()), tspec
+        )
         tspec = get_tspec_f32(config.seq_len, (config.dim // config.n_heads) // 2)
-        self.freq_cis_imag = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        self.freq_cis_imag = TensorF32(
+            buf.bitcast_offset_f32(tspec.num_elements()), tspec
+        )
         tspec = get_tspec_f32(config.vocab_size, config.dim)
-        self.wcls = TensorF32(buf.bitcast_offset_f32(tspec.bytecount()), tspec)
+        self.wcls = TensorF32(buf.bitcast_offset_f32(tspec.num_elements()), tspec)
 
 
 fn read_file(file_name: String, inout buf: FileBuf) raises:
@@ -268,8 +272,6 @@ fn tokenizer_init(inout tok: Tokenizer, inout buf: FileBuf) -> None:
         let slen = read_val_int(buf)
         tok.vocab.store(i, read_val_str(buf, slen))
 
-    tok.vocab_scores = buf.data.offset(buf.offset).bitcast[DType.float32]()
-    buf.offset += tok.vocab_size * 4
     return None
 
 
@@ -306,12 +308,15 @@ fn rmsnorm(inout o: TensorF32, x: TensorF32, weight: TensorF32) -> None:
     fn _norm[_nelts: Int](j: Int):
         let val = weight.simd_load[_nelts](j) * ss * x.simd_load[_nelts](j)
         o.simd_store[_nelts](j, val)
+
     print(309)
     vectorize[nelts, _norm](size)
     print(311)
 
+
 fn foo(inout o: TensorF32, x: TensorF32, weight: TensorF32) -> None:
-    print('foo')
+    print("foo")
+
 
 fn softmax(inout x: TensorF32) -> None:
     # Find max value (for numerical stability)
@@ -399,7 +404,7 @@ fn transformer(
             weights.rms_att_weight.data().offset(l * dim), get_tspec_f32(dim)
         )
         # rmsnorm(state.xb, x, tmpw)
-        print('402 run foo fn')
+        print("402 run foo fn")
         foo(state.xb, x, tmpw)
         print(403)
         # QKV matmuls for this position
@@ -727,6 +732,17 @@ fn main() raises:
     var next_token = 0  # Will store the next token in the sequence
     # Initialize with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
     var token = 1
+
+    print(736)
+    var tmpw = TensorF32(
+        weights.rms_att_weight.data(), get_tspec_f32(config.dim)
+    )
+    foo(state.xb, state.xb, state.xb)
+    print(741)
+    #foo(state.xb, state.x, tmpw) # error on fn exit
+    foo(state.xb, state.x, state.x) # causes error on line 740 !!!
+    print(744)
+
 
     # Position in the sequence
     var pos = 0
