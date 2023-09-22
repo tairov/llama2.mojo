@@ -135,7 +135,7 @@ struct Matrix:
 
 fn read_val_int(inout buf: FileBuf) raises -> Int:
     # DTypePointer[DType.ui8](buf.data).bitcast[DType.ui8]()
-    let data = buf.data.offset(buf.offset).bitcast[DType.uint32]()
+    let data = buf.data.offset(buf.get_offset()).bitcast[DType.uint32]()
     let result = data.load(0)
     buf.move_offset(4)
     return result.to_int()
@@ -143,15 +143,16 @@ fn read_val_int(inout buf: FileBuf) raises -> Int:
 
 fn read_val_float32(inout buf: FileBuf) raises -> Float32:
     # DTypePointer[DType.ui8](buf.data).bitcast[DType.ui8]()
-    let val = buf.data.offset(buf.offset).bitcast[DType.float32]().load(0)
+    let val = buf.data.offset(buf.get_offset()).bitcast[DType.float32]().load(0)
     buf.move_offset(4)
     return val
 
 
 fn read_val_str(inout buf: FileBuf, slen: Int) raises -> PointerString:
+    
     let str = PointerString.alloc(slen + 1)
     for i in range(slen):
-        str.store(i, buf.data.load(buf.offset))
+        str.store(i, buf.data.load(buf.get_offset()))
         buf.move_offset(1)
     str.store(slen, 0)
 
@@ -253,15 +254,22 @@ struct FileBuf:
     fn move_offset(inout self, size: Int) raises:
         let new_offset = self.offset + size
         if new_offset > self.size:
-            raise Error("Attempting to read past the end of a FileBuf")
+            raise Error("Resulting offset will be past the end of the FileBuf")
         if new_offset < 0:
-            raise Error("Attempting to read before the beginning of a FileBuf")
+            raise Error("Resulting offset will be before the beginning of the FileBuf")
         self.offset = new_offset
 
     fn bitcast_offset_float32(inout self, size: Int) raises -> BufferPtrFloat32:
         let ret = self.data.offset(self.offset).bitcast[DType.float32]()
         self.move_offset(size * sizeof[DType.float32]())
         return ret
+
+    fn get_offset(self) raises -> Int: 
+        if self.offset > self.size:
+            raise Error("Offset is past the end of the FileBuf")
+        if self.offset < 0:
+            raise Error("Offset is before the beginning of the FileBuf")
+        return self.offset
 
 
 struct Tokenizer:
