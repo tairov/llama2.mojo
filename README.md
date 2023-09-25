@@ -25,6 +25,15 @@ Further researches of both solutions in parallelized mode compilation showed tha
 I'm still investigating in this direction since not all the possible optimizations were applied to the Mojo version so
 far.
 
+## supported models
+
+At the moment, the following models were successfully executed via `llama2.mojo`:
+
+| Model                    |
+|--------------------------|
+| stories 260K, 15M, 110M  |
+| Tinyllama-1.1B-Chat-v0.2 |
+
 ### benchmarking
 
 #### OS/HW specs
@@ -40,10 +49,12 @@ CPU MHz:    3191.998
 |-----------------|--------------------------------------------------|--------------------------------------------------|------------------------------------------------------------|---------------------------------------------------------------------|-----------------|--------------------------------|----------------------------|
 | stories15M.bin  | 1.3 tok/s                                        | 75.73 tok/s                                      | 237 tok/s                                                  | 450 tok/s                                                           | 260 tok/s       | 390 tok/s                      | 67.26 tok/s                | 
 | stories110M.bin | -                                                | 9 tok/s                                          | 30 tok/s                                                   | 64 tok/s                                                            | 40 tok/s        | 57 tok/s                       | 9.20 tok/s                 | 
+| TinyLlama-1.1B  | -                                                | -                                                | -                                                          | -                                                                   | -               | 6.6 tok/s                      | -                          | 
 
 ## prerequisites
 
-Make sure you have installed and [configured mojo on your environment](https://docs.modular.com/mojo/manual/get-started/index.html)
+Make sure you have installed
+and [configured mojo on your environment](https://docs.modular.com/mojo/manual/get-started/index.html)
 
 Or you can use [mojo playground](https://playground.modular.com/) to run this model.
 
@@ -92,11 +103,50 @@ Lily said,
 achieved tok/s:  359.66149506346966
 ```
 
+## running via Docker
+
+```bash
+docker build -t llama2.mojo .
+docker run -it llama2.mojo
+```
+
+With Gradio UI:
+
+```bash
+# uncomment the last line in Dockerfile CMD ["python", "gradio_app.py"]
+docker run -it -p 0.0.0.0:7860:7860 llama2.mojo
+``` 
+
+## citing llama2.🔥
+
+If you use or discuss llama2.mojo in your academic research, please cite the project to help spread awareness:
+
+```
+@misc{llama2.mojo,
+  author = {Aydyn Tairov}, 
+  title = {Inference Llama2 in one file of pure Mojo},
+  year = {2023},
+  month = {09},
+  howpublished = {\url{https://github.com/tairov/llama2.mojo}},
+  note = {Llama2 Mojo, MIT License}
+}
+```
+
+We kindly request that you include a link to the GitHub repository in published papers. This will allow interested
+readers to easily find the latest updates and extensions to the project.
+
+`llama2.mojo` aims to encourage academic research on efficient implementations of transformer architectures, the `llama`
+model, and applications of the `mojo` programming language. Citing the project helps growth of the knowledge community
+around these topics. We appreciate your support through referencing `llama2.mojo`!
+
 ## play with Tinyllama-1.1B-Chat-v0.2
 
-The [TinyLlama](https://github.com/jzhang38/TinyLlama) is a 1.1B Llama model trained on 3 trillion tokens. This compactness allows it to cater to a multitude of applications demanding a restricted computation and memory footprint. This is also the reason why we select it as the first model to support. 
+The [TinyLlama](https://github.com/jzhang38/TinyLlama) is a 1.1B Llama model trained on 3 trillion tokens. This
+compactness allows it to cater to a multitude of applications demanding a restricted computation and memory footprint.
+This is also the reason why we select it as the first model to support.
 
 First, navigate to the folder when you keep your projects and clone this repository to this folder:
+
 ```bash
 git clone https://github.com/tairov/llama2.mojo.git
 ```
@@ -146,39 +196,6 @@ def fibonacci(n):
 
 This function takes an integer n as a parameter and returns the next Fibonacci number. It uses a recursive approach to calculate the Fibonacci numbers, starting from 0 and working up. The function returns the value it found at the current level of the recursion, which can be either 0 or a Fibonacci number.
 ```
-
-## running via Docker
-
-```bash
-docker build -t llama2.mojo .
-docker run -it llama2.mojo
-```
-
-With Gradio UI:
-
-```bash
-# uncomment the last line in Dockerfile CMD ["python", "gradio_app.py"]
-docker run -it -p 0.0.0.0:7860:7860 llama2.mojo
-``` 
-
-## citing llama2.🔥
-
-If you use or discuss llama2.mojo in your academic research, please cite the project to help spread awareness:
-
-```
-@misc{llama2.mojo,
-  author = {Aydyn Tairov}, 
-  title = {Inference Llama2 in one file of pure Mojo},
-  year = {2023},
-  month = {09},
-  howpublished = {\url{https://github.com/tairov/llama2.mojo}},
-  note = {Llama2 Mojo, MIT License}
-}
-```
-
-We kindly request that you include a link to the GitHub repository in published papers. This will allow interested readers to easily find the latest updates and extensions to the project.
-
-`llama2.mojo` aims to encourage academic research on efficient implementations of transformer architectures, the `llama` model, and applications of the `mojo` programming language. Citing the project helps growth of the knowledge community around these topics. We appreciate your support through referencing `llama2.mojo`!
 
 ## license
 
