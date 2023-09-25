@@ -135,7 +135,7 @@ struct Matrix:
 
 fn read_val_int(inout buf: FileBuf) raises -> Int:
     # DTypePointer[DType.ui8](buf.data).bitcast[DType.ui8]()
-    let data = buf.data.offset(buf.get_offset()).bitcast[DType.uint32]()
+    let data = buf.data.offset(buf.get_offset()).bitcast[DType.int32]()
     let result = data.load(0)
     buf.move_offset(4)
     return result.to_int()
@@ -149,7 +149,6 @@ fn read_val_float32(inout buf: FileBuf) raises -> Float32:
 
 
 fn read_val_str(inout buf: FileBuf, slen: Int) raises -> PointerString:
-    
     let str = PointerString.alloc(slen + 1)
     for i in range(slen):
         str.store(i, buf.data.load(buf.get_offset()))
@@ -159,16 +158,17 @@ fn read_val_str(inout buf: FileBuf, slen: Int) raises -> PointerString:
     return str
 
 
+fn str_len(s: PointerString) -> Int:
+    var len = 0
+    while s[len] != 0:
+        len += 1
+    return len
+
+
 # not optimal concat
 fn str_concat(s1: PointerString, s2: PointerString) -> PointerString:
-    var l1 = 0
-    var l2 = 0
-
-    while s1[l1] != 0:
-        l1 += 1
-    while s2[l2] != 0:
-        l2 += 1
-
+    let l1 = str_len(s1)
+    let l2 = str_len(s2)
     let str = PointerString.alloc(l1 + l2 + 1)
     memcpy[UInt8](str, s1, l1)
     memcpy[UInt8](str.offset(l1), s2, l2)
@@ -264,12 +264,24 @@ struct FileBuf:
         self.move_offset(size * sizeof[DType.float32]())
         return ret
 
-    fn get_offset(self) raises -> Int: 
+    fn get_offset(self) raises -> Int:
         if self.offset > self.size:
             raise Error("Offset is past the end of the FileBuf")
         if self.offset < 0:
             raise Error("Offset is before the beginning of the FileBuf")
         return self.offset
+
+
+fn wrap(token: PointerString) -> PointerString:
+    if string_compare(token, str_to_ptr('\\n')) == 0:
+        return str_to_ptr('<0x0A>')
+    if string_compare(token, str_to_ptr('\\t')) == 0:
+        return str_to_ptr('<0x09>')
+    if string_compare(token, str_to_ptr('\'')) == 0:
+        return str_to_ptr('<0x27>')
+    elif string_compare(token, str_to_ptr('\"')) == 0:
+        return str_to_ptr('<0x22>')
+    return token
 
 
 struct Tokenizer:
@@ -311,7 +323,8 @@ struct Tokenizer:
         return None
 
     # Binary search that returns -1 if string is not found
-    fn find(inout self, token: PointerString) -> Int:
+    fn find(inout self, token_o: PointerString) -> Int:
+        let token = wrap(token_o)
         let n = self.vocab_size
         if len(self.sorted_indices) < n:
             self.sort()
@@ -443,18 +456,21 @@ struct TransformerWeights:
         self.rms_final_weight.set_buf_ptr(
             buf.bitcast_offset_float32(self.rms_final_weight.size())
         )
-        self.freq_cis_real = Matrix(config.seq_len, (config.dim // config.n_heads) // 2)
+        # maybe need modifying for different model
+        # config.head_size // 2 for stories and tinyllama-1.1
+        self.freq_cis_real = Matrix(config.seq_len, config.head_size // 2)
         self.freq_cis_real.set_buf_ptr(
             buf.bitcast_offset_float32(self.freq_cis_real.size())
         )
-        self.freq_cis_imag = Matrix(config.seq_len, (config.dim // config.n_heads) // 2)
+        self.freq_cis_imag = Matrix(config.seq_len, config.head_size // 2)
         self.freq_cis_imag.set_buf_ptr(
             buf.bitcast_offset_float32(self.freq_cis_imag.size())
         )
-        self.wcls = Matrix(
-            config.vocab_size, config.dim
-        )  # if shared_weights else rest_floats
-        self.wcls.set_buf_ptr(self.token_embedding_table.data)
+        self.wcls = Matrix(config.vocab_size, config.dim)
+        if shared_weights:
+            self.wcls.set_buf_ptr(self.token_embedding_table.data)
+        else:
+            self.wcls.set_buf_ptr(buf.bitcast_offset_float32(self.wcls.size()))
 
 
 fn read_file(file_name: String, inout buf: FileBuf) raises:
@@ -583,7 +599,61 @@ fn matmul(inout C: Matrix, A: Matrix, B: Matrix, rt: Runtime) -> None:
     matmul_parallelized(C, A, B, rt)
 
 
-fn transformer(
+# Apply RoPE rotation to the q and k vectors for each head
+# roate the first and second half
+fn rope_rotation_falcon(inout state: RunState, freq_cis_real_row: BufferPtrFloat32,
+                           freq_cis_imag_row: BufferPtrFloat32, config: Config) -> None:
+    # tinyllama-1.1, llama model
+    let q = state.q.data
+    let k = state.k.data
+    let head_size = config.head_size
+    let off_rot = head_size // 2
+    for i in range(config.n_heads):
+        for j in range(config.head_size // 2):
+            let fcr = freq_cis_real_row.offset(j).load(0)
+            let fci = freq_cis_imag_row.offset(j).load(0)
+            let q0 = q.offset(i * head_size + j).load(0)
+            let q1 = q.offset(i * head_size + j + off_rot).load(0)
+            q.offset(i * head_size + j).store(0, q0 * fcr - q1 * fci)
+            q.offset(i * head_size + j + off_rot).store(0, q0 * fci + q1 * fcr)
+            if i < config.n_kv_heads:
+                let k0 = k.offset(i * head_size + j).load(0)
+                let k1 = k.offset(i * head_size + j + off_rot).load(0)
+                k.offset(i * head_size + j).store(0, k0 * fcr - k1 * fci)
+                k.offset(i * head_size + j + off_rot).store(
+                    0, k0 * fci + k1 * fcr
+                )
+
+# Apply RoPE rotation to the q and k vectors for each head
+# rotate odd and even dim
+fn rope_rotation_llama(inout state: RunState, freq_cis_real_row: BufferPtrFloat32,
+                         freq_cis_imag_row: BufferPtrFloat32, config: Config) -> None:
+    # stories model, llama2c
+    let q = state.q.data
+    let k = state.k.data
+    let head_size = config.head_size
+    let off_rot = 1
+    for i in range(config.n_heads):
+        for j in range(0, config.head_size, 2):
+            let fcr = freq_cis_real_row.offset(j // 2).load(0)
+            let fci = freq_cis_imag_row.offset(j // 2).load(0)
+            let q0 = q.offset(i * head_size + j).load(0)
+            let q1 = q.offset(i * head_size + j + off_rot).load(0)
+            q.offset(i * head_size + j).store(0, q0 * fcr - q1 * fci)
+            q.offset(i * head_size + j + off_rot).store(0, q0 * fci + q1 * fcr)
+            if i < config.n_kv_heads:
+                let k0 = k.offset(i * head_size + j).load(0)
+                let k1 = k.offset(i * head_size + j + off_rot).load(0)
+                k.offset(i * head_size + j).store(0, k0 * fcr - k1 * fci)
+                k.offset(i * head_size + j + off_rot).store(
+                    0, k0 * fci + k1 * fcr
+                )
+
+@always_inline
+fn transformer[
+    rope_rotation: fn (inout state: RunState, freq_cis_real_row: BufferPtrFloat32,
+                       freq_cis_imag_row: BufferPtrFloat32, config: Config) -> None
+](
     token: Int,
     pos: Int,
     config: Config,
@@ -630,29 +700,7 @@ fn transformer(
         matmul(state.v, state.xb, tmpw, state.rt)
 
         # Apply RoPE rotation to the q and k vectors for each head
-        let q = state.q.data
-        let k = state.k.data
-        for i in range(0, head_size * config.n_kv_heads, 2):
-            let head_dim_half = i % head_size // 2
-            let fcr = freq_cis_real_row.offset(head_dim_half).load(0)
-            let fci = freq_cis_imag_row.offset(head_dim_half).load(0)
-            let q0 = q.offset(i).load(0)
-            let q1 = q.offset(i + 1).load(0)
-            let k0 = k.offset(i).load(0)
-            let k1 = k.offset(i + 1).load(0)
-            q.offset(i).store(0, q0 * fcr - q1 * fci)
-            q.offset(i + 1).store(0, q0 * fci + q1 * fcr)
-            k.offset(i).store(0, k0 * fcr - k1 * fci)
-            k.offset(i + 1).store(0, k0 * fci + k1 * fcr)
-
-        for i in range(head_size * config.n_kv_heads, dim, 2):
-            let head_dim_half = i % head_size // 2
-            let fcr = freq_cis_real_row.offset(head_dim_half).load(0)
-            let fci = freq_cis_imag_row.offset(head_dim_half).load(0)
-            let q0 = q.offset(i).load(0)
-            let q1 = q.offset(i + 1).load(0)
-            q.offset(i).store(0, q0 * fcr - q1 * fci)
-            q.offset(i + 1).store(0, q0 * fci + q1 * fcr)
+        rope_rotation(state, freq_cis_real_row, freq_cis_imag_row, config)
 
         # Multihead attention. Iterate over all heads
         for h in range(config.n_heads):
@@ -836,6 +884,8 @@ fn print_usage():
     print("  -t <float>  temperature in [0,1.0], default 1.0")
     print("  -n <int>    number of steps to run for, default 256. 0 = max_seq_len")
     print("  -i <string> input prompt")
+    print("  -z          tokenizer path")
+    print("  -r <string> rope architecture, default 'llama' for llama rope, 'falcon' for falcon rope")
 
 
 fn main() raises:
@@ -847,6 +897,7 @@ fn main() raises:
     var steps = 256
     var prompt = String("")
     var rng_seed: Int = time.now()
+    var rope_arch = String("llama") # llama | falcon
 
     @parameter
     fn argparse() raises -> Int:
@@ -859,12 +910,14 @@ fn main() raises:
                 print("Option not supported: ", args[i])
             if args[i] == "-n":
                 steps = atol(args[i + 1])
-            if args[i] == "-tk":
+            if args[i] == "-z":
                 tokenizer = args[i + 1]
             if args[i] == "-s":
                 rng_seed = atol(args[i + 1])
             if args[i] == "-i":
                 prompt = args[i + 1]
+            if args[i] == "-r":
+                rope_arch = args[i + 1]
             if args[i] == "-t":
                 let val = args[i + 1]
                 temperature = 0.0
@@ -879,7 +932,6 @@ fn main() raises:
                     print("Wrong temperature value", temperature)
                     return 0
         return 1
-
     let res = argparse()
     if res == 0:
         print_usage()
@@ -909,6 +961,10 @@ fn main() raises:
     read_file(tokenizer, tbuf)
     var tok = Tokenizer(config.vocab_size, tbuf)
 
+    # print the layers number and vocab size
+    print("n layers: ", config.n_layers)
+    print('vocab size: ', tok.vocab_size)
+
     # Create and initialize the application RunState
     var state = RunState(config)
 
@@ -923,12 +979,17 @@ fn main() raises:
     var next_token = 0  # Will store the next token in the sequence
     # Initialize with token 1 (=BOS), as done in Llama-2 sentencepiece tokenizer
     var token = 1
+    let _transformer = transformer[rope_rotation_llama] if rope_arch == 'llama'
+                                                            else transformer[rope_rotation_falcon]
+
+    # if arch == 'tinyllama':
+    #     _transformer = transformer[rope_rotation_tinyllama]
 
     # Position in the sequence
     var pos = 0
     while pos < steps:
         # Forward the transformer to get logits for the next token
-        transformer(token, pos, config, state, weights)
+        _transformer(token, pos, config, state, weights)
 
         if pos < len(prompt_tokens):
             next_token = prompt_tokens[pos]

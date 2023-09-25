@@ -92,6 +92,61 @@ Lily said,
 achieved tok/s:  359.66149506346966
 ```
 
+## play with Tinyllama-1.1B-Chat-v0.2
+
+The [TinyLlama](https://github.com/jzhang38/TinyLlama) is a 1.1B Llama model trained on 3 trillion tokens. This compactness allows it to cater to a multitude of applications demanding a restricted computation and memory footprint. This is also the reason why we select it as the first model to support. 
+
+First, navigate to the folder when you keep your projects and clone this repository to this folder:
+```bash
+git clone https://github.com/tairov/llama2.mojo.git
+```
+
+Then, open the repository folder:
+
+```bash
+cd llama2.mojo
+```
+
+Now, let's download the model and the tokenizer
+
+```bash
+wget https://huggingface.co/kirp/TinyLlama-1.1B-Chat-v0.2-bin/resolve/main/tok_tl-chat.bin
+wget https://huggingface.co/kirp/TinyLlama-1.1B-Chat-v0.2-bin/resolve/main/tl-chat.bin
+```
+
+Then, just run the Mojo
+
+```bash
+mojo llama2.mojo tl-chat.bin \
+    -r falcon \
+    -z tok_tl-chat.bin \
+    -n 256 -t 0 -s 100 -i "<|im_start|>user\nGive me a python function to generate Fibonacci sequence<|im_end|>\n<|im_start|>assistant\n"
+```
+
+**example output**
+
+```
+num hardware threads:  6
+SIMD vector width:  16
+checkpoint size:  4400767004 [ 4196 MB ]
+n layers:  22
+vocab size:  32003
+<|im_start|>user
+Give me a python function to generate Fibonacci sequence<|im_end|>
+<|im_start|>assistant
+Sure, here's a Python function that generates the Fibonacci sequence:
+
+def fibonacci(n):
+    if n <= 0:
+        return 0
+    elif n == 1:
+        return 1
+    else:
+        return fibonacci(n-1) + fibonacci(n-2)
+
+This function takes an integer n as a parameter and returns the next Fibonacci number. It uses a recursive approach to calculate the Fibonacci numbers, starting from 0 and working up. The function returns the value it found at the current level of the recursion, which can be either 0 or a Fibonacci number.
+```
+
 ## running via Docker
 
 ```bash
