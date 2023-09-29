@@ -168,7 +168,6 @@ Then, just run the Mojo
 
 ```bash
 mojo llama2.mojo tl-chat.bin \
-    -r falcon \
     -z tok_tl-chat.bin \
     -n 256 -t 0 -s 100 -i "<|im_start|>user\nGive me a python function to generate Fibonacci sequence<|im_end|>\n<|im_start|>assistant\n"
 ```
