@@ -106,7 +106,7 @@ achieved tok/s:  359.66149506346966
 ## running via Docker
 
 ```bash
-docker build -t llama2.mojo .
+docker build --build-arg AUTH_KEY=<your-modular-auth-key> -t llama2.mojo .
 docker run -it llama2.mojo
 ```
 
