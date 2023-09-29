@@ -27,6 +27,7 @@ alias BufferPtrFloat32 = DTypePointer[DType.float32]
 alias PointerStrings = Pointer[PointerString]
 alias TensorF32 = Tensor[DType.float32]
 
+
 struct TensorSlice:
     # Provides a view into a tensor representing a 1D slice on its first or first 2 dimensions.
     # Same function signatures as Tensor but without owning the data.
@@ -36,9 +37,9 @@ struct TensorSlice:
     fn __init__(inout self, t: TensorF32, layer: Int):
         let elements_per_layer = t.num_elements() // t.dim(0)
         self._data = t.data().offset(layer * elements_per_layer)
-        if (t.rank() == 2): 
+        if t.rank() == 2:
             self._shape = TensorShape(t.dim(1))
-        elif (t.rank() == 3):
+        elif t.rank() == 3:
             self._shape = TensorShape(t.dim(1), t.dim(2))
         else:
             self._shape = TensorShape(t.dim(1), t.dim(2), t.dim(3))
@@ -46,7 +47,9 @@ struct TensorSlice:
     fn __init__(inout self, t: TensorF32, layer: Int, row: Int):
         let elements_per_layer = t.num_elements() // t.dim(0)
         let elements_per_row = elements_per_layer // t.dim(1)
-        self._data = t.data().offset(layer * elements_per_layer + row * elements_per_row)
+        self._data = t.data().offset(
+            layer * elements_per_layer + row * elements_per_row
+        )
         if t.rank() == 3:
             self._shape = TensorShape(t.dim(2))
         else:
@@ -54,10 +57,10 @@ struct TensorSlice:
 
     fn data(self) -> BufferPtrFloat32:
         return self._data
-    
+
     fn shape(self) -> TensorShape:
         return self._shape
-    
+
     fn num_elements(self) -> Int:
         return self._shape.num_elements()
 
@@ -66,26 +69,32 @@ struct TensorSlice:
 
     fn rank(self) -> Int:
         return self._shape.rank()
-    
+
     fn simd_load[nelts: Int](self, idx: Int) -> SIMD[DType.float32, nelts]:
         return self._data.simd_load[nelts](idx)
 
     fn simd_load[nelts: Int](self, *indices: Int) -> SIMD[DType.float32, nelts]:
         if len(VariadicList(indices)) > 2:
-            print("Warning: TensorSlice only supports 1D and 2D indexing.  Results are unlikely to be correct.")
+            print(
+                "Warning: TensorSlice only supports 1D and 2D indexing.  Results are"
+                " unlikely to be correct."
+            )
         return self._data.simd_load[nelts](indices[0] * self._shape[1] + indices[1])
-    
-    fn simd_load[nelts: Int](self, indices: StaticIntTuple[2]) -> SIMD[DType.float32, nelts]:
+
+    fn simd_load[
+        nelts: Int
+    ](self, indices: StaticIntTuple[2]) -> SIMD[DType.float32, nelts]:
         return self._data.simd_load[nelts](indices[0] * self._shape[1] + indices[1])
-    
+
     fn __getitem__(self, idx: Int) -> SIMD[DType.float32, 1]:
         return self._data.simd_load[1](idx)
-    
+
     fn simd_store[nelts: Int](self, idx: Int, val: SIMD[DType.float32, nelts]):
         return self._data.simd_store[nelts](idx, val)
 
     fn __setitem__(self, idx: Int, val: SIMD[DType.float32, 1]):
         return self.simd_store[1](idx, val)
+
 
 fn read_val_int(inout buf: FileBuf) raises -> Int:
     # DTypePointer[DType.ui8](buf.data).bitcast[DType.ui8]()
@@ -370,20 +379,30 @@ struct TransformerWeights:
     var rms_final_weight: TensorF32
     var wcls: TensorF32
 
-    fn __init__(inout self, config: Config, shared_weights: Int, inout buf: FileBuf) raises:
+    fn __init__(
+        inout self, config: Config, shared_weights: Int, inout buf: FileBuf
+    ) raises:
         fn load_weights(inout buf: FileBuf, *dims: Int) raises -> TensorF32:
             # Ensure returned Tensor doesn't share a pointer with FileBuf
             let shape = TensorShape(dims)
             let result_data = BufferPtrFloat32.alloc(shape.num_elements())
-            memcpy(result_data, buf.bitcast_offset_f32(shape.num_elements()), shape.num_elements())
+            memcpy(
+                result_data,
+                buf.bitcast_offset_f32(shape.num_elements()),
+                shape.num_elements(),
+            )
             return TensorF32(result_data, shape)
 
         self.token_embedding_table = load_weights(buf, config.vocab_size, config.dim)
         self.rms_att_weight = load_weights(buf, config.n_layers, config.dim)
-        self.wq = load_weights(buf, config.n_layers, config.dim, config.n_heads * config.head_size)
+        self.wq = load_weights(
+            buf, config.n_layers, config.dim, config.n_heads * config.head_size
+        )
         self.wk = load_weights(buf, config.n_layers, config.dim, config.kv_dim)
         self.wv = load_weights(buf, config.n_layers, config.dim, config.kv_dim)
-        self.wo = load_weights(buf, config.n_layers, config.n_heads * config.head_size, config.dim)
+        self.wo = load_weights(
+            buf, config.n_layers, config.n_heads * config.head_size, config.dim
+        )
         self.rms_ffn_weight = load_weights(buf, config.n_layers, config.dim)
         self.w1 = load_weights(buf, config.n_layers, config.hidden_dim, config.dim)
         self.w2 = load_weights(buf, config.n_layers, config.dim, config.hidden_dim)
@@ -396,7 +415,7 @@ struct TransformerWeights:
         if shared_weights:
             self.wcls = self.token_embedding_table
         else:
-            self.wcls = load_weights( buf, config.vocab_size, config.dim)
+            self.wcls = load_weights(buf, config.vocab_size, config.dim)
 
 
 fn read_file(file_name: String, inout buf: FileBuf) raises:
@@ -479,29 +498,36 @@ fn rmsnorm(
 fn rmsnorm(inout o: TensorF32, x: TensorF32, weight: TensorF32):
     rmsnorm(o._ptr, x.data(), weight.data(), weight.dim(weight.rank() - 1))
 
+
 @always_inline
 fn rmsnorm(inout o: TensorF32, x: TensorF32, weight: TensorSlice):
     rmsnorm(o._ptr, x.data(), weight.data(), weight.dim(weight.rank() - 1))
+
 
 @always_inline
 fn softmax(inout x: TensorF32) -> None:
     softmax(x, 0, x.dim(0))
 
+
 @always_inline
 fn softmax(inout x: TensorF32, start: Int, end: Int):
     var max_val: Float32 = -1e9
+
     @parameter
     fn _max[_nelts: Int](ii: Int):
         let val = x.simd_load[_nelts](start + ii).reduce_max()
         if val > max_val:
             max_val = val
-    
+
     vectorize[nelts, _max](end - start)
 
     var ssum: Float32 = 0.0
+
     @parameter
     fn _exp[_nelts: Int](ii: Int):
-        x.simd_store[_nelts](start + ii, math.exp(x.simd_load[_nelts](start + ii) - max_val))
+        x.simd_store[_nelts](
+            start + ii, math.exp(x.simd_load[_nelts](start + ii) - max_val)
+        )
         ssum += x.simd_load[_nelts](start + ii).reduce_add()
 
     vectorize[nelts, _exp](end - start)
@@ -512,8 +538,16 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
 
     vectorize[nelts, _norm](end - start)
 
+
 @always_inline
-fn matmul_parallelized(inout C: BufferPtrFloat32, A: BufferPtrFloat32, B: BufferPtrFloat32, rows: Int, cols: Int, rt: Runtime):
+fn matmul_parallelized(
+    inout C: BufferPtrFloat32,
+    A: BufferPtrFloat32,
+    B: BufferPtrFloat32,
+    rows: Int,
+    cols: Int,
+    rt: Runtime,
+):
     @parameter
     fn compute_row(i: Int):
         var tmp = SIMD[DType.float32, nelts](0)
@@ -532,15 +566,18 @@ fn matmul_parallelized(inout C: BufferPtrFloat32, A: BufferPtrFloat32, B: Buffer
 
     parallelize[compute_row](rt, rows, rt.parallelism_level())
 
+
 @always_inline
 fn matmul(inout C: TensorF32, A: TensorF32, B: TensorF32, rt: Runtime) raises:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_parallelized(C._ptr, A.data(), B.data(), B.dim(0), B.dim(1), rt)
 
+
 @always_inline
 fn matmul(inout C: TensorF32, A: TensorF32, B: TensorSlice, rt: Runtime) raises:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_parallelized(C._ptr, A.data(), B.data(), B.dim(0), B.dim(1), rt)
+
 
 @always_inline
 fn matmul(inout C: TensorSlice, A: TensorF32, B: TensorSlice, rt: Runtime) raises:
@@ -603,13 +640,13 @@ fn transformer(
         let loff = l * config.seq_len * config.kv_dim
         state.k = TensorSlice(state.key_cache, l, pos)
         matmul(state.k, state.xb, TensorSlice(weights.wk, l), state.rt)
-        
+
         state.v = TensorSlice(state.value_cache, l, pos)
         matmul(state.v, state.xb, TensorSlice(weights.wv, l), state.rt)
 
         # Apply RoPE rotation to the q and k vectors for each head
         rope_rotation_llama(state, freq_cis_real_row, freq_cis_imag_row, config)
- 
+
         memset_zero(state.xb.data(), state.xb.num_elements())
         # Multihead attention. Iterate over all heads
         for h in range(config.n_heads):
@@ -618,7 +655,7 @@ fn transformer(
 
             # Index of attention scores for this head
             let att_offset = h * config.seq_len
-           
+
             # Iterate over all timesteps, including the current one
             for t in range(pos + 1):
                 # Starting index of the key vector for this head and at this timestep
@@ -627,12 +664,12 @@ fn transformer(
                 var score: Float32 = 0.0
                 for i in range(head_size):
                     score += state.q[q_offset + i] * state.key_cache[k_offset + i]
-                
+
                 score /= math.sqrt[DType.float32, 1](head_size)
 
                 # Save the score to the attention buffer
                 state.att[att_offset + t] = score
-                
+
             # Softmax the scores to get attention weights, from 0..pos inclusively
             softmax(state.att, att_offset, att_offset + pos + 1)
             # Weighted sum of the values, store back into xb
@@ -640,15 +677,17 @@ fn transformer(
             for t in range(pos + 1):
                 # Starting index of the value vector for this head and at this timestep
                 let v_offset = loff + t * kv_dim + (h // kv_mul) * head_size
-                
+
                 # Get the attention weight for this timestep
                 let a = state.att[att_offset + t]
                 # Accumulate the weighted value into xb
-                
+
                 for i in range(head_size):
-                    let xbi = state.xb[xb_offset + i] + a * state.value_cache[v_offset + i]
+                    let xbi = state.xb[xb_offset + i] + a * state.value_cache[
+                        v_offset + i
+                    ]
                     state.xb[xb_offset + i] = xbi
-    
+
         # Final matrix multiplication to get the output of the attention
         matmul(state.xb2, state.xb, TensorSlice(weights.wo, l), state.rt)
         # Residual connection back into x
@@ -681,6 +720,7 @@ fn transformer(
 
     # Classifier into logits
     matmul(state.logits, state.x, weights.wcls, state.rt)
+
 
 fn argmax(v: TensorF32) -> Int:
     # return argmax of v
@@ -827,6 +867,7 @@ fn main() raises:
                     print("Wrong temperature value", temperature)
                     return 0
         return 1
+
     let res = argparse()
     if res == 0:
         print_usage()
