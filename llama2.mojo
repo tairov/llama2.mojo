@@ -351,7 +351,7 @@ struct RunState:
         # Initialize with placeholders. The real tensors reference layer and position during forward pass.
         self.k = TensorSlice(TensorF32(TensorShape(1, config.kv_dim)), 1)
         self.v = TensorSlice(TensorF32(TensorShape(1, config.kv_dim)), 1)
-        self.rt = Runtime(num_cores())
+        self.rt = Runtime(num_cores() // 2)
 
 
 struct TransformerWeights:
@@ -560,21 +560,18 @@ fn rope_rotation_llama(inout state: RunState, freq_cis_real_row: TensorSlice,
             let fcr = freq_cis_real_row[j // 2]
             let fci = freq_cis_imag_row[j // 2]
             let q0 = state.q[i * head_size + j]
-            let q1 = state.q[i * head_size + j + off_rot]
+            let q1 = state.q[i * head_size + j + 1]
             state.q[i * head_size + j] = q0 * fcr - q1 * fci
-            state.q[i * head_size + j + off_rot] = q0 * fci + q1 * fcr
+            state.q[i * head_size + j + 1] = q0 * fci + q1 * fcr
             if i < config.n_kv_heads:
                 let k0 = state.k[i * head_size + j]
-                let k1 = state.k[i * head_size + j + off_rot]
+                let k1 = state.k[i * head_size + j + 1]
                 state.k[i * head_size + j] = k0 * fcr - k1 * fci
-                state.k[i * head_size + j + off_rot] = k0 * fci + k1 * fcr
+                state.k[i * head_size + j + 1] = k0 * fci + k1 * fcr
 
 
 @always_inline
-fn transformer[
-    rope_rotation: fn (inout state: RunState, freq_cis_real_row: TensorSlice,
-                       freq_cis_imag_row: TensorSlice, config: Config) -> None
-](
+fn transformer(
     token: Int,
     pos: Int,
     config: Config,
