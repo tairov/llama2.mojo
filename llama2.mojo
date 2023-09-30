@@ -214,6 +214,9 @@ struct FileBuf:
         self.offset = 0
         self.size = 0
 
+    fn __del__(owned self):
+        self.data.free()
+
     fn move_offset(inout self, size: Int) raises:
         let new_offset = self.offset + size
         if new_offset > self.size:
@@ -236,14 +239,14 @@ struct FileBuf:
 
 
 fn wrap(token: PointerString) -> PointerString:
-    if string_compare(token, str_to_ptr('\\n')) == 0:
-        return str_to_ptr('<0x0A>')
-    if string_compare(token, str_to_ptr('\\t')) == 0:
-        return str_to_ptr('<0x09>')
-    if string_compare(token, str_to_ptr('\'')) == 0:
-        return str_to_ptr('<0x27>')
-    elif string_compare(token, str_to_ptr('\"')) == 0:
-        return str_to_ptr('<0x22>')
+    if string_compare(token, str_to_ptr("\\n")) == 0:
+        return str_to_ptr("<0x0A>")
+    if string_compare(token, str_to_ptr("\\t")) == 0:
+        return str_to_ptr("<0x09>")
+    if string_compare(token, str_to_ptr("'")) == 0:
+        return str_to_ptr("<0x27>")
+    elif string_compare(token, str_to_ptr('"')) == 0:
+        return str_to_ptr("<0x22>")
     return token
 
 
