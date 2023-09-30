@@ -239,14 +239,14 @@ struct FileBuf:
 
 
 fn wrap(token: PointerString) -> PointerString:
-    if string_compare(token, str_to_ptr("\\n")) == 0:
-        return str_to_ptr("<0x0A>")
-    if string_compare(token, str_to_ptr("\\t")) == 0:
-        return str_to_ptr("<0x09>")
-    if string_compare(token, str_to_ptr("'")) == 0:
-        return str_to_ptr("<0x27>")
-    elif string_compare(token, str_to_ptr('"')) == 0:
-        return str_to_ptr("<0x22>")
+    if string_compare(token, str_to_ptr('\\n')) == 0:
+        return str_to_ptr('<0x0A>')
+    if string_compare(token, str_to_ptr('\\t')) == 0:
+        return str_to_ptr('<0x09>')
+    if string_compare(token, str_to_ptr('\'')) == 0:
+        return str_to_ptr('<0x27>')
+    elif string_compare(token, str_to_ptr('\"')) == 0:
+        return str_to_ptr('<0x22>')
     return token
 
 
@@ -398,14 +398,10 @@ struct TransformerWeights:
 
         self.token_embedding_table = load_weights(buf, config.vocab_size, config.dim)
         self.rms_att_weight = load_weights(buf, config.n_layers, config.dim)
-        self.wq = load_weights(
-            buf, config.n_layers, config.dim, config.n_heads * config.head_size
-        )
+        self.wq = load_weights(buf, config.n_layers, config.dim, config.dim)
         self.wk = load_weights(buf, config.n_layers, config.dim, config.kv_dim)
         self.wv = load_weights(buf, config.n_layers, config.dim, config.kv_dim)
-        self.wo = load_weights(
-            buf, config.n_layers, config.n_heads * config.head_size, config.dim
-        )
+        self.wo = load_weights(buf, config.n_layers, config.dim, config.dim)
         self.rms_ffn_weight = load_weights(buf, config.n_layers, config.dim)
         self.w1 = load_weights(buf, config.n_layers, config.hidden_dim, config.dim)
         self.w2 = load_weights(buf, config.n_layers, config.dim, config.hidden_dim)
