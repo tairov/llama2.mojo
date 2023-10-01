@@ -540,7 +540,7 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
 
 @always_inline
 fn matmul_parallelized(
-    inout C: BufferPtrFloat32,
+    C: BufferPtrFloat32,
     A: BufferPtrFloat32,
     B: BufferPtrFloat32,
     rows: Int,
@@ -567,28 +567,32 @@ fn matmul_parallelized(
 
 
 @always_inline
-fn matmul(inout C: TensorF32, A: TensorF32, B: TensorF32, rt: Runtime) raises:
+fn matmul(C: TensorF32, A: TensorF32, B: TensorF32, rt: Runtime) raises:
     # B (d,n) @ A (n,) -> C (d,)
-    matmul_parallelized(C._ptr, A.data(), B.data(), B.dim(0), B.dim(1), rt)
+    matmul_parallelized(C.data(), A.data(), B.data(), B.dim(0), B.dim(1), rt)
 
 
 @always_inline
-fn matmul(inout C: TensorF32, A: TensorF32, B: TensorSlice, rt: Runtime) raises:
+fn matmul(C: TensorF32, A: TensorF32, B: TensorSlice, rt: Runtime) raises:
     # B (d,n) @ A (n,) -> C (d,)
-    matmul_parallelized(C._ptr, A.data(), B.data(), B.dim(0), B.dim(1), rt)
+    matmul_parallelized(C.data(), A.data(), B.data(), B.dim(0), B.dim(1), rt)
 
 
 @always_inline
-fn matmul(inout C: TensorSlice, A: TensorF32, B: TensorSlice, rt: Runtime) raises:
+fn matmul(C: TensorSlice, A: TensorF32, B: TensorSlice, rt: Runtime) raises:
     # B (d,n) @ A (n,) -> C (d,)
-    matmul_parallelized(C._data, A.data(), B.data(), B.dim(0), B.dim(1), rt)
+    matmul_parallelized(C.data(), A.data(), B.data(), B.dim(0), B.dim(1), rt)
 
 
 # Apply RoPE rotation to the q and k vectors for each head
 # rotate odd and even dim
 @always_inline
-fn rope_rotation_llama(inout state: RunState, freq_cis_real_row: TensorSlice,
-                         freq_cis_imag_row: TensorSlice, config: Config) -> None:
+fn rope_rotation_llama(
+    inout state: RunState,
+    freq_cis_real_row: TensorSlice,
+    freq_cis_imag_row: TensorSlice,
+    config: Config,
+) -> None:
     # stories model, llama2
     let head_size = config.head_size
     for i in range(config.n_heads):
@@ -725,7 +729,7 @@ fn argmax(v: TensorF32) -> Int:
     # return argmax of v
     var max_i: Int = 0
     var max_p: Float32 = v[0]
-    for i in range(v.dim(v.rank() - 1)):
+    for i in range(v.dim(0)):
         if v[i] > max_p:
             max_i = i
             max_p = v[i]
@@ -898,7 +902,7 @@ fn main() raises:
 
     # print the layers number and vocab size
     print("n layers: ", config.n_layers)
-    print('vocab size: ', tok.vocab_size)
+    print("vocab size: ", tok.vocab_size)
 
     # Create and initialize the application RunState
     var state = RunState(config)
