@@ -239,14 +239,14 @@ struct FileBuf:
 
 
 fn wrap(token: PointerString) -> PointerString:
-    if string_compare(token, str_to_ptr('\\n')) == 0:
-        return str_to_ptr('<0x0A>')
-    if string_compare(token, str_to_ptr('\\t')) == 0:
-        return str_to_ptr('<0x09>')
-    if string_compare(token, str_to_ptr('\'')) == 0:
-        return str_to_ptr('<0x27>')
-    elif string_compare(token, str_to_ptr('\"')) == 0:
-        return str_to_ptr('<0x22>')
+    if string_compare(token, str_to_ptr("\\n")) == 0:
+        return str_to_ptr("<0x0A>")
+    if string_compare(token, str_to_ptr("\\t")) == 0:
+        return str_to_ptr("<0x09>")
+    if string_compare(token, str_to_ptr("'")) == 0:
+        return str_to_ptr("<0x27>")
+    elif string_compare(token, str_to_ptr('"')) == 0:
+        return str_to_ptr("<0x22>")
     return token
 
 
@@ -569,19 +569,31 @@ fn matmul_parallelized(
 @always_inline
 fn matmul(C: TensorF32, A: TensorF32, B: TensorF32, rt: Runtime) raises:
     # B (d,n) @ A (n,) -> C (d,)
+    matmul_dimension_checks(A.shape(), B.shape())
     matmul_parallelized(C.data(), A.data(), B.data(), B.dim(0), B.dim(1), rt)
 
 
 @always_inline
 fn matmul(C: TensorF32, A: TensorF32, B: TensorSlice, rt: Runtime) raises:
     # B (d,n) @ A (n,) -> C (d,)
+    matmul_dimension_checks(A.shape(), B.shape())
     matmul_parallelized(C.data(), A.data(), B.data(), B.dim(0), B.dim(1), rt)
 
 
 @always_inline
 fn matmul(C: TensorSlice, A: TensorF32, B: TensorSlice, rt: Runtime) raises:
     # B (d,n) @ A (n,) -> C (d,)
+    matmul_dimension_checks(A.shape(), B.shape())
     matmul_parallelized(C.data(), A.data(), B.data(), B.dim(0), B.dim(1), rt)
+
+
+fn matmul_dimension_checks(a: TensorShape, b: TensorShape) raises:
+    if a[0] != b[1]:
+        raise Error(
+            "matmul dimension mismatch. A rows (dim 0) not equal to B columns (dim 1)"
+        )
+    if b.rank() != 2:
+        raise Error("matmul expects B to be a 2D matrix")
 
 
 # Apply RoPE rotation to the q and k vectors for each head
