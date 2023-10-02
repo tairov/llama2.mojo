@@ -34,7 +34,7 @@ struct TensorSlice:
     var _data: BufferPtrFloat32
     var _shape: TensorShape
 
-    fn __init__(inout self, t: TensorF32, layer: Int):
+    fn __init__(inout self, t: TensorF32, layer: Int) raises:
         let elements_per_layer = t.num_elements() // t.dim(0)
         self._data = t.data().offset(layer * elements_per_layer)
         if t.rank() == 2:
@@ -42,9 +42,11 @@ struct TensorSlice:
         elif t.rank() == 3:
             self._shape = TensorShape(t.dim(1), t.dim(2))
         else:
-            self._shape = TensorShape(t.dim(1), t.dim(2), t.dim(3))
+            # Compiler complains if _shape not defined
+            self._shape = TensorShape(1)
+            raise Error("TensorSlice: rank greater than 3 not implemented.")
 
-    fn __init__(inout self, t: TensorF32, layer: Int, row: Int):
+    fn __init__(inout self, t: TensorF32, layer: Int, row: Int) raises:
         let elements_per_layer = t.num_elements() // t.dim(0)
         let elements_per_row = elements_per_layer // t.dim(1)
         self._data = t.data().offset(
@@ -53,7 +55,9 @@ struct TensorSlice:
         if t.rank() == 3:
             self._shape = TensorShape(t.dim(2))
         else:
-            self._shape = TensorShape(t.dim(2), t.dim(3))
+            # Compiler complains if _shape not defined
+            self._shape = TensorShape(1)
+            raise Error("TensorSlice: rank greater than 3 not implemented.")
 
     fn data(self) -> BufferPtrFloat32:
         return self._data
@@ -348,7 +352,7 @@ struct RunState:
     var value_cache: TensorF32  # (layer, seq_len, dim)
     var rt: Runtime
 
-    fn __init__(inout self, config: Config):
+    fn __init__(inout self, config: Config) raises:
         self.x = TensorF32(config.dim)
         self.xb = TensorF32(config.dim)
         self.xb2 = TensorF32(config.dim)
