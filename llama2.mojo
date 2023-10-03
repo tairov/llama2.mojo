@@ -374,7 +374,7 @@ struct RunState:
         # Initialize with placeholders. The real tensors reference layer and position during forward pass.
         self.k = TensorSlice(TensorF32(TensorShape(1, config.kv_dim)), 1)
         self.v = TensorSlice(TensorF32(TensorShape(1, config.kv_dim)), 1)
-        self.rt = Runtime(num_cores() // 2)
+        self.rt = Runtime(num_cores())
 
 
 struct TransformerWeights:
@@ -618,7 +618,11 @@ fn rope_rotation_llama(
 ) -> None:
     # stories model, llama2
     let head_size = config.head_size
-    for i in range(config.n_heads):
+
+    @parameter
+    fn head_loop(i: Int):
+        # Simple vectorization with (head_size // 2) steps gave junk transformer output.
+        # Maybe because the nelt ranges end up overlapping between the steps.
         for j in range(0, config.head_size, 2):
             let fcr = freq_cis_real_row[j // 2]
             let fci = freq_cis_imag_row[j // 2]
@@ -631,6 +635,8 @@ fn rope_rotation_llama(
                 let k1 = state.k[i * head_size + j + 1]
                 state.k[i * head_size + j] = k0 * fcr - k1 * fci
                 state.k[i * head_size + j + 1] = k0 * fci + k1 * fcr
+
+    parallelize[head_loop](state.rt, config.n_heads, state.rt.parallelism_level())
 
 
 @always_inline
@@ -674,8 +680,10 @@ fn transformer(
         rope_rotation_llama(state, freq_cis_real_row, freq_cis_imag_row, config)
 
         memset_zero(state.xb.data(), state.xb.num_elements())
-        # Multihead attention. Iterate over all heads
-        for h in range(config.n_heads):
+
+        # Multihead attention. Iterate over all heads in parallel.
+        @parameter
+        fn loop_over_heads(h: Int):
             # Get the query vector for this head
             let q_offset = h * head_size
 
@@ -688,9 +696,15 @@ fn transformer(
                 let k_offset = loff + t * kv_dim + (h // kv_mul) * head_size
                 # Calculate the attention score as the dot product of q and k
                 var score: Float32 = 0.0
-                for i in range(head_size):
-                    score += state.q[q_offset + i] * state.key_cache[k_offset + i]
 
+                @parameter
+                fn score_fn[_nelts: Int](i: Int):
+                    score += (
+                        state.q.simd_load[_nelts](q_offset + i)
+                        * state.key_cache.simd_load[_nelts](k_offset + i)
+                    ).reduce_add()
+
+                vectorize[nelts, score_fn](head_size)
                 score /= math.sqrt[DType.float32, 1](head_size)
 
                 # Save the score to the attention buffer
@@ -708,12 +722,18 @@ fn transformer(
                 let a = state.att[att_offset + t]
                 # Accumulate the weighted value into xb
 
-                for i in range(head_size):
-                    let xbi = state.xb[xb_offset + i] + a * state.value_cache[
-                        v_offset + i
-                    ]
-                    state.xb[xb_offset + i] = xbi
+                @parameter
+                fn xb_accumulate[_nelts: Int](i: Int):
+                    let xbi = state.xb.simd_load[_nelts](
+                        xb_offset + i
+                    ) + a * state.value_cache.simd_load[_nelts](v_offset + i)
+                    state.xb.simd_store[_nelts](xb_offset + i, xbi)
 
+                vectorize[nelts, xb_accumulate](head_size)
+
+        parallelize[loop_over_heads](
+            state.rt, config.n_heads, state.rt.parallelism_level()
+        )
         # Final matrix multiplication to get the output of the attention
         matmul(state.xb2, state.xb, TensorSlice(weights.wo, l), state.rt)
         # Residual connection back into x
@@ -726,15 +746,15 @@ fn transformer(
 
         matmul(state.hb2, state.xb, TensorSlice(weights.w3, l), state.rt)
 
-        # Apply SiLU activation function (silu(x) = x * sigmoid(x))
-        for i in range(hidden_dim):
-            let hbi = state.hb[i]
-            state.hb[i] = hbi * (1.0 / (1.0 + math.exp(-hbi)))
+        @parameter
+        fn silu[_nelts: Int](i: Int):
+            let initial_hb = state.hb.simd_load[_nelts](i)
+            # Apply SiLU activation function (silu(x) = x * sigmoid(x))
+            let hbi = initial_hb * (1.0 / (1.0 + math.exp(-initial_hb)))
+            # Elementwise multiply with w3(x)
+            state.hb.simd_store[_nelts](i, hbi * state.hb2.simd_load[_nelts](i))
 
-        # Elementwise multiply with w3(x)
-        for i in range(hidden_dim):
-            state.hb[i] = state.hb[i] * state.hb2[i]
-
+        vectorize[nelts, silu](hidden_dim)
         # Final matrix multiplication to get the output of the FFN
         matmul(state.xb, state.hb, TensorSlice(weights.w2, l), state.rt)
 
