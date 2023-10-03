@@ -864,7 +864,7 @@ fn main() raises:
     var tokenizer = StringRef("tokenizer.bin")
     var checkpoint = StringRef("stories15M.bin")
     var temperature = 0.9
-    var steps = 256
+
     var prompt = String("")
     var rng_seed: Int = time.now()
 
@@ -877,8 +877,6 @@ fn main() raises:
         for i in range(2, len(args), 2):
             if args[i] == "-p":
                 print("Option not supported: ", args[i])
-            if args[i] == "-n":
-                steps = atol(args[i + 1])
             if args[i] == "-z":
                 tokenizer = args[i + 1]
             if args[i] == "-s":
@@ -921,9 +919,6 @@ fn main() raises:
 
     let weights: TransformerWeights = TransformerWeights(config, shared_weights, fbuf)
 
-    if steps <= 0 or steps > config.seq_len:
-        steps = config.seq_len
-
     # Read in the tokenizer.bin file
     read_file(tokenizer, tbuf)
     var tok = Tokenizer(config.vocab_size, tbuf)
@@ -948,8 +943,8 @@ fn main() raises:
     var token = 1
 
     # Position in the sequence
-    var pos = 0
-    while pos < steps:
+    alias steps = 256
+    for pos in range(steps):
         # Forward the transformer to get logits for the next token
         transformer(token, pos, config, state, weights)
 
@@ -980,10 +975,9 @@ fn main() raises:
 
         # Advance forward
         token = next_token
-        pos += 1
 
         if start == 0:
             start = time_in_ms()
 
     let end = time_in_ms()
-    print("\nachieved tok/s: ", (pos - 1) / (end - start) * 1000)
+    print("\nachieved tok/s: ", (steps - 1) / (end - start) * 1000)
