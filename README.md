@@ -39,7 +39,7 @@ At the moment, the following models were successfully executed via `llama2.mojo`
 | Model           | [llama2.c](https://github.com/karpathy/llama2.c) (OMP/parallelized) | **llama2.mojo** (parallelized) | llama2.mojo (naive matmul) | [llama2.py](https://github.com/tairov/llama2.py) |
 |-----------------|---------------------------------------------------------------------|--------------------------------|----------------------------|--------------------------------------------------|
 | stories15M.bin  | 435 tok/s                                                           | 440 tok/s                      | 67.26 tok/s                | 1.3 tok/s                                        | 
-| stories110M.bin | 64 tok/s                                                            | 57 tok/s                       | 9.20 tok/s                 | -                                                | 
+| stories110M.bin | 64 tok/s                                                            | 63 tok/s                       | 9.20 tok/s                 | -                                                | 
 | TinyLlama-1.1B  | 7.25 tok/s                                                          | 6.6 tok/s                      | -                          | -                                                | 
 
 #### OS/HW specs
