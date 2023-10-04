@@ -34,7 +34,13 @@ At the moment, the following models were successfully executed via `llama2.mojo`
 | stories 260K, 15M, 110M  |
 | Tinyllama-1.1B-Chat-v0.2 |
 
-### benchmarking
+### benchmark (updated)
+
+| Model           | [llama2.c](https://github.com/karpathy/llama2.c) (OMP/parallelized) | **llama2.mojo** (parallelized) | llama2.mojo (naive matmul) | [llama2.py](https://github.com/tairov/llama2.py) |
+|-----------------|---------------------------------------------------------------------|--------------------------------|----------------------------|--------------------------------------------------|
+| stories15M.bin  | 435 tok/s                                                           | 440 tok/s                      | 67.26 tok/s                | 1.3 tok/s                                        | 
+| stories110M.bin | 64 tok/s                                                            | 57 tok/s                       | 9.20 tok/s                 | -                                                | 
+| TinyLlama-1.1B  | 7.25 tok/s                                                          | 6.6 tok/s                      | -                          | -                                                | 
 
 #### OS/HW specs
 
@@ -44,12 +50,6 @@ CPU(s):     6
 Model name: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz
 CPU MHz:    3191.998
 ```
-
-| Model           | [llama2.py](https://github.com/tairov/llama2.py) | [llama2.c](https://github.com/karpathy/llama2.c) | [llama2.c](https://github.com/karpathy/llama2.c) (runfast) | [llama2.c](https://github.com/karpathy/llama2.c) (OMP/parallelized) | **llama2.mojo** | **llama2.mojo** (parallelized) | llama2.mojo (naive matmul) |
-|-----------------|--------------------------------------------------|--------------------------------------------------|------------------------------------------------------------|---------------------------------------------------------------------|-----------------|--------------------------------|----------------------------|
-| stories15M.bin  | 1.3 tok/s                                        | 75.73 tok/s                                      | 237 tok/s                                                  | 450 tok/s                                                           | 260 tok/s       | 390 tok/s                      | 67.26 tok/s                | 
-| stories110M.bin | -                                                | 9 tok/s                                          | 30 tok/s                                                   | 64 tok/s                                                            | 40 tok/s        | 57 tok/s                       | 9.20 tok/s                 | 
-| TinyLlama-1.1B  | -                                                | -                                                | 2.4 tok/s                                                  | 7.25 tok/s                                                          | -               | 6.6 tok/s                      | -                          | 
 
 ## prerequisites
 
@@ -81,7 +81,7 @@ wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
 Then, just run the Mojo
 
 ```bash
-mojo llama2.mojo stories15M.bin -s 100 -n 256 -t 0.5 -i "Llama is an animal"
+mojo llama2.mojo stories15M.bin -s 100 -n 256 -t 0.5 -i "Mojo is a language"
 ```
 
 **example output**
@@ -89,18 +89,13 @@ mojo llama2.mojo stories15M.bin -s 100 -n 256 -t 0.5 -i "Llama is an animal"
 ```
 num hardware threads:  6
 SIMD vector width:  16
-checkpoint size:  60816028
-Llama is an animal was walking down the street. She stopped and looked up with a big smile on her face. She had a puppy in her arms. She was so excited to have a new friend.
-The puppy ran up to her and said, "Hi! I'm here to be your friend!"
-Mandy smiled and said, "Hi! I'm Mandy. Can I play with you?"
-The puppy barked and wagged his tail. Mandy was so happy! She gave the puppy a big hug and they played with the puppy all afternoon.
-When it was time to go home, Mandy said, "I have to go now. Goodbye!"
-The puppy barked and said, "Goodbye Mandy! See you tomorrow!"
-Mandy waved goodbye and then she went back home. She was so happy to have a new friend.
-<s>
-Once upon a time, there was a little girl named Lily. She loved to play outside and explore the world around her. One day, she went for a walk in the park with her mommy. They saw a big tree with lots of leaves.
-Lily said,
-achieved tok/s:  359.66149506346966
+checkpoint size:  60816028 [ 57 MB ]
+n layers:  6
+vocab size:  32000
+Mojo is a language that people like to talk. Hephones are very different from other people. He has a big book with many pictures and words. He likes to look at the pictures and learn new things.
+One day, Mojo was playing with his friends in the park. They were running and laughing and having fun. Mojo told them about his book and his friends. They listened and looked at the pictures. Then, they saw a picture of a big, scary monster. They were very scared and ran away.
+Mojo was sad that his book was gone. He told his friends about the monster and they all felt very sad. Mojo's friends tried to make him feel better, but nothing worked. Mojo never learned his language again.
+achieved tok/s:  440.21739130434781
 ```
 
 ## running via Docker
