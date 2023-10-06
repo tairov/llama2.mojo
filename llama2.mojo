@@ -19,7 +19,9 @@ import os
 import random
 import time
 
-alias nelts = (2 * simdwidthof[DType.float32]())
+var cores = 0
+
+alias nelts = (2*simdwidthof[DType.float32]())
 
 alias PointerString = Pointer[UInt8]
 alias BufferPtrType = DTypePointer[DType.uint8]
@@ -357,7 +359,7 @@ struct RunState:
     var logits: TensorF32  # output logits
     var key_cache: TensorF32  # (layer, seq_len, dim)
     var value_cache: TensorF32  # (layer, seq_len, dim)
-    var rt: Runtime
+
 
     fn __init__(inout self, config: Config) raises:
         self.x = TensorF32(config.dim)
@@ -374,7 +376,7 @@ struct RunState:
         # Initialize with placeholders. The real tensors reference layer and position during forward pass.
         self.k = TensorSlice(TensorF32(TensorShape(1, config.kv_dim)), 1)
         self.v = TensorSlice(TensorF32(TensorShape(1, config.kv_dim)), 1)
-        self.rt = Runtime(num_cores())
+
 
 
 struct TransformerWeights:
@@ -550,14 +552,7 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
 
 
 @always_inline
-fn matmul_parallelized(
-    C: BufferPtrFloat32,
-    A: BufferPtrFloat32,
-    B: BufferPtrFloat32,
-    rows: Int,
-    cols: Int,
-    rt: Runtime,
-):
+fn matmul_parallelized(C: BufferPtrFloat32,A: BufferPtrFloat32,B: BufferPtrFloat32,rows: Int,cols: Int,):
     @parameter
     fn compute_row(i: Int):
         var tmp = SIMD[DType.float32, nelts](0)
@@ -566,36 +561,40 @@ fn matmul_parallelized(
         fn dot[_nelts: Int](j: Int):
             if _nelts < nelts:  # take care of tail array elements with length <  nelts
                 tmp[0] += (
-                    A.simd_load[_nelts](j) * B.simd_load[_nelts](i * cols + j)
+                A.simd_load[_nelts](j) * B.simd_load[_nelts](i * cols + j)
                 ).reduce_add()
             else:
                 tmp += A.simd_load[nelts](j) * B.simd_load[nelts](i * cols + j)
 
         vectorize[nelts, dot](cols)
         C.store(i, tmp.reduce_add())
+    
 
-    parallelize[compute_row](rt, rows, rt.parallelism_level())
+    parallelize[compute_row](rows,cores)
+
+    
+
+    
+    
+@always_inline
+fn matmul(C: TensorF32, A: TensorF32, B: TensorF32) raises:
+    # B (d,n) @ A (n,) -> C (d,)
+    matmul_dimension_checks(A.shape(), B.shape())
+    matmul_parallelized(C.data(), A.data(), B.data(), B.dim(0), B.dim(1))
 
 
 @always_inline
-fn matmul(C: TensorF32, A: TensorF32, B: TensorF32, rt: Runtime) raises:
+fn matmul(C: TensorF32, A: TensorF32, B: TensorSlice) raises:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_dimension_checks(A.shape(), B.shape())
-    matmul_parallelized(C.data(), A.data(), B.data(), B.dim(0), B.dim(1), rt)
+    matmul_parallelized(C.data(), A.data(), B.data(), B.dim(0), B.dim(1))
 
 
 @always_inline
-fn matmul(C: TensorF32, A: TensorF32, B: TensorSlice, rt: Runtime) raises:
+fn matmul(C: TensorSlice, A: TensorF32, B: TensorSlice) raises:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_dimension_checks(A.shape(), B.shape())
-    matmul_parallelized(C.data(), A.data(), B.data(), B.dim(0), B.dim(1), rt)
-
-
-@always_inline
-fn matmul(C: TensorSlice, A: TensorF32, B: TensorSlice, rt: Runtime) raises:
-    # B (d,n) @ A (n,) -> C (d,)
-    matmul_dimension_checks(A.shape(), B.shape())
-    matmul_parallelized(C.data(), A.data(), B.data(), B.dim(0), B.dim(1), rt)
+    matmul_parallelized(C.data(), A.data(), B.data(), B.dim(0), B.dim(1))
 
 
 fn matmul_dimension_checks(a: TensorShape, b: TensorShape) raises:
@@ -618,9 +617,8 @@ fn rope_rotation_llama(
 ) -> None:
     # stories model, llama2
     let head_size = config.head_size
-
     @parameter
-    fn head_loop(i: Int):
+    fn head_loop(i:Int):
         # Simple vectorization with (head_size // 2) steps gave junk transformer output.
         # Maybe because the nelt ranges end up overlapping between the steps.
         for j in range(0, config.head_size, 2):
@@ -635,8 +633,8 @@ fn rope_rotation_llama(
                 let k1 = state.k[i * head_size + j + 1]
                 state.k[i * head_size + j] = k0 * fcr - k1 * fci
                 state.k[i * head_size + j + 1] = k0 * fci + k1 * fcr
+    parallelize[head_loop](config.n_heads,cores)
 
-    parallelize[head_loop](state.rt, config.n_heads, state.rt.parallelism_level())
 
 
 @always_inline
@@ -667,14 +665,14 @@ fn transformer(
         # Attention rmsnorm
         rmsnorm(state.xb, state.x, TensorSlice(weights.rms_att_weight, l))
         # QKV matmuls for this position
-        matmul(state.q, state.xb, TensorSlice(weights.wq, l), state.rt)
+        matmul(state.q, state.xb, TensorSlice(weights.wq, l))
 
         let loff = l * config.seq_len * config.kv_dim
         state.k = TensorSlice(state.key_cache, l, pos)
-        matmul(state.k, state.xb, TensorSlice(weights.wk, l), state.rt)
+        matmul(state.k, state.xb, TensorSlice(weights.wk, l))
 
         state.v = TensorSlice(state.value_cache, l, pos)
-        matmul(state.v, state.xb, TensorSlice(weights.wv, l), state.rt)
+        matmul(state.v, state.xb, TensorSlice(weights.wv, l))
 
         # Apply RoPE rotation to the q and k vectors for each head
         rope_rotation_llama(state, freq_cis_real_row, freq_cis_imag_row, config)
@@ -683,7 +681,7 @@ fn transformer(
 
         # Multihead attention. Iterate over all heads in parallel.
         @parameter
-        fn loop_over_heads(h: Int):
+        fn loop_over_heads(h:Int):
             # Get the query vector for this head
             let q_offset = h * head_size
 
@@ -731,20 +729,18 @@ fn transformer(
 
                 vectorize[nelts, xb_accumulate](head_size)
 
-        parallelize[loop_over_heads](
-            state.rt, config.n_heads, state.rt.parallelism_level()
-        )
+        parallelize[loop_over_heads](config.n_heads,cores)
         # Final matrix multiplication to get the output of the attention
-        matmul(state.xb2, state.xb, TensorSlice(weights.wo, l), state.rt)
+        matmul(state.xb2, state.xb, TensorSlice(weights.wo, l))
         # Residual connection back into x
         accum(state.x, state.xb2)
         # FFN rmsnorm
         rmsnorm(state.xb, state.x, TensorSlice(weights.rms_ffn_weight, l))
 
         # Calculate self.w1(x) and self.w3(x) for FFN
-        matmul(state.hb, state.xb, TensorSlice(weights.w1, l), state.rt)
+        matmul(state.hb, state.xb, TensorSlice(weights.w1, l))
 
-        matmul(state.hb2, state.xb, TensorSlice(weights.w3, l), state.rt)
+        matmul(state.hb2, state.xb, TensorSlice(weights.w3, l))
 
         @parameter
         fn silu[_nelts: Int](i: Int):
@@ -756,7 +752,7 @@ fn transformer(
 
         vectorize[nelts, silu](hidden_dim)
         # Final matrix multiplication to get the output of the FFN
-        matmul(state.xb, state.hb, TensorSlice(weights.w2, l), state.rt)
+        matmul(state.xb, state.hb, TensorSlice(weights.w2, l))
 
         # Residual connection
         accum(state.x, state.xb)
@@ -765,7 +761,7 @@ fn transformer(
     rmsnorm(state.x, state.x, weights.rms_final_weight)
 
     # Classifier into logits
-    matmul(state.logits, state.x, weights.wcls, state.rt)
+    matmul(state.logits, state.x, weights.wcls)
 
 
 fn argmax(v: TensorF32) -> Int:
@@ -874,6 +870,7 @@ fn print_usage():
 
 fn main() raises:
     print("num hardware threads: ", num_cores())
+    cores = num_cores()
     print("SIMD vector width: ", nelts)
     var tokenizer = StringRef("tokenizer.bin")
     var checkpoint = StringRef("stories15M.bin")
@@ -977,8 +974,10 @@ fn main() raises:
                 next_token = argmax(state.logits)
             else:
                 # Apply the temperature to the logits
-                for q in range(config.vocab_size):
+                @parameter
+                fn temp(q:Int):
                     state.logits[q] = state.logits[q] / temperature
+                parallelize[temp](config.vocab_size,cores)
                 # Apply softmax to the logits to get the probabilities for the next token
                 softmax(state.logits)
                 # Sample from this distribution to get the next token
