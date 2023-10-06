@@ -975,9 +975,11 @@ fn main() raises:
             else:
                 # Apply the temperature to the logits
                 @parameter
-                fn temp(q:Int):
-                    state.logits[q] = state.logits[q] / temperature
-                parallelize[temp](config.vocab_size,cores)
+                fn temperature_vectorized[_nelts: Int](i: Int):
+                    let tmp = state.logits.simd_load[_nelts](i) / temperature
+                    state.logits.simd_store[_nelts](i,tmp)
+                vectorize[nelts, temperature_vectorized](config.vocab_size)
+
                 # Apply softmax to the logits to get the probabilities for the next token
                 softmax(state.logits)
                 # Sample from this distribution to get the next token
