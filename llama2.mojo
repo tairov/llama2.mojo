@@ -574,7 +574,7 @@ fn matmul_parallelized(
         vectorize[nelts, dot](cols)
         C.store(i, tmp.reduce_add())
 
-    parallelize[compute_row](rt, rows, rt.parallelism_level())
+    parallelize[compute_row](rows, rt.parallelism_level())
 
 
 @always_inline
@@ -636,7 +636,7 @@ fn rope_rotation_llama(
                 state.k[i * head_size + j] = k0 * fcr - k1 * fci
                 state.k[i * head_size + j + 1] = k0 * fci + k1 * fcr
 
-    parallelize[head_loop](state.rt, config.n_heads, state.rt.parallelism_level())
+    parallelize[head_loop](config.n_heads, state.rt.parallelism_level())
 
 
 @always_inline
@@ -731,9 +731,7 @@ fn transformer(
 
                 vectorize[nelts, xb_accumulate](head_size)
 
-        parallelize[loop_over_heads](
-            state.rt, config.n_heads, state.rt.parallelism_level()
-        )
+        parallelize[loop_over_heads](config.n_heads, state.rt.parallelism_level())
         # Final matrix multiplication to get the output of the attention
         matmul(state.xb2, state.xb, TensorSlice(weights.wo, l), state.rt)
         # Residual connection back into x
