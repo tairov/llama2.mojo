@@ -4,9 +4,9 @@
   <img src="assets/llama2.mojo-demo.gif" width="700" alt="llama2.mojo logo">
 </p>
 
-## why this port?
+Have you ever wanted to inference a baby Llama 2 model in pure Mojo? No? Well, now you can!
 
-This repository serves as a port that provides a Mojo-based implementation of `llama2.c`.
+supported version: [Mojo 0.4.0](https://docs.modular.com/mojo/changelog.html#v0.4.0-2023-10-05)
 
 With the release of [Mojo](https://www.modular.com/blog/mojo-its-finally-here), I was inspired to take my Python port
 of [llama2.py](https://github.com/tairov/llama2.py) and transition it to Mojo. The result? A version that leverages
@@ -21,9 +21,7 @@ Since there were some debates was this comparison legit or not I did some resear
 mode `llama2.c`
 includes multiple optimizations like aggressive vectorization, which makes comparison fair with Mojo SIMD vectorization.
 
-Further researches of both solutions in parallelized mode compilation showed that `llama2.c` is faster by ~20%
-I'm still investigating in this direction since not all the possible optimizations were applied to the Mojo version so
-far.
+UPD. further improvements of `llama2.mojo` parallelization make it working slightly better or the same as C on different models.
 
 ## supported models
 
@@ -40,7 +38,7 @@ At the moment, the following models were successfully executed via `llama2.mojo`
 |-----------------|---------------------------------------------------------------------|--------------------------------|----------------------------|--------------------------------------------------|
 | stories15M.bin  | 435 tok/s                                                           | 440 tok/s                      | 67.26 tok/s                | 1.3 tok/s                                        | 
 | stories110M.bin | 64 tok/s                                                            | 63 tok/s                       | 9.20 tok/s                 | -                                                | 
-| TinyLlama-1.1B  | 7.25 tok/s                                                          | 6.6 tok/s                      | -                          | -                                                | 
+| TinyLlama-1.1B  | 7.25 tok/s                                                          | 7.25 tok/s                      | -                          | -                                                | 
 
 #### OS/HW specs
 
