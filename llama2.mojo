@@ -895,7 +895,6 @@ fn main() raises:
                 rng_seed = atol(args[i + 1])
             if args[i] == "-i":
                 prompt = args[i + 1]
-                rng_seed = atol(args[i + 1])
             if args[i] == "-j":
                 cores = atol(args[i + 1])
             if args[i] == "-t":
