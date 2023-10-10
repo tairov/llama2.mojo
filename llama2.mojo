@@ -866,11 +866,11 @@ fn print_usage():
     print("  -n <int>    number of steps to run for, default 256. 0 = max_seq_len")
     print("  -i <string> input prompt")
     print("  -z          tokenizer path")
-    print("  -j          number of workers to use, default num_cores() // 2")
+    print("  -j          number of workers to use, default num_cores()")
 
 
 fn main() raises:
-    workers = num_cores() // 2
+    workers = num_cores()
     var tokenizer = StringRef("tokenizer.bin")
     var checkpoint = StringRef("stories15M.bin")
     var temperature = 0.9
