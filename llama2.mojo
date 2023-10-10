@@ -19,7 +19,7 @@ import os
 import random
 import time
 
-var cores = 0
+var workers = 0
 
 alias nelts = (2*simdwidthof[DType.float32]())
 
@@ -570,7 +570,7 @@ fn matmul_parallelized(C: BufferPtrFloat32,A: BufferPtrFloat32,B: BufferPtrFloat
         C.store(i, tmp.reduce_add())
     
 
-    parallelize[compute_row](rows,cores)
+    parallelize[compute_row](rows, workers)
 
     
 
@@ -633,7 +633,7 @@ fn rope_rotation_llama(
                 let k1 = state.k[i * head_size + j + 1]
                 state.k[i * head_size + j] = k0 * fcr - k1 * fci
                 state.k[i * head_size + j + 1] = k0 * fci + k1 * fcr
-    parallelize[head_loop](config.n_heads,cores)
+    parallelize[head_loop](config.n_heads, workers)
 
 
 
@@ -729,7 +729,7 @@ fn transformer(
 
                 vectorize[nelts, xb_accumulate](head_size)
 
-        parallelize[loop_over_heads](config.n_heads,cores)
+        parallelize[loop_over_heads](config.n_heads, workers)
         # Final matrix multiplication to get the output of the attention
         matmul(state.xb2, state.xb, TensorSlice(weights.wo, l))
         # Residual connection back into x
@@ -866,11 +866,11 @@ fn print_usage():
     print("  -n <int>    number of steps to run for, default 256. 0 = max_seq_len")
     print("  -i <string> input prompt")
     print("  -z          tokenizer path")
-    print("  -j          number of threads to use, default num_cores()")
+    print("  -j          number of workers to use, default num_cores() // 2")
 
 
 fn main() raises:
-    cores = num_cores()
+    workers = num_cores() // 2
     var tokenizer = StringRef("tokenizer.bin")
     var checkpoint = StringRef("stories15M.bin")
     var temperature = 0.9
@@ -896,7 +896,7 @@ fn main() raises:
             if args[i] == "-i":
                 prompt = args[i + 1]
             if args[i] == "-j":
-                cores = atol(args[i + 1])
+                workers = atol(args[i + 1])
             if args[i] == "-t":
                 let val = args[i + 1]
                 temperature = 0.0
@@ -917,7 +917,7 @@ fn main() raises:
         print_usage()
         return
 
-    print("num hardware threads:", cores, " SIMD width:", nelts)
+    print("num parallel workers:", workers, " SIMD width:", nelts)
     random.seed(rng_seed)
     var fbuf: FileBuf = FileBuf()
     var tbuf: FileBuf = FileBuf()
