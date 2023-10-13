@@ -974,8 +974,7 @@ fn main() raises:
                 # Greedy argmax sampling: take the token with the highest probability
                 next_token = argmax(state.logits)
             else:
-                # Apply the temperature to the logits
-
+                #Apply the temperature to the logits
                 @parameter
                 fn temperature_vectorized[_nelts: Int](i: Int):
                     let tmp = state.logits.simd_load[_nelts](i) / temperature
