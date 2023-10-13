@@ -19,7 +19,7 @@ import os
 import random
 import time
 
-var cores = 0
+var workers = 0
 
 alias nelts = (2*simdwidthof[DType.float32]())
 
@@ -570,7 +570,7 @@ fn matmul_parallelized(C: BufferPtrFloat32,A: BufferPtrFloat32,B: BufferPtrFloat
         C.store(i, tmp.reduce_add())
     
 
-    parallelize[compute_row](rows,cores)
+    parallelize[compute_row](rows, workers)
 
     
 
@@ -633,7 +633,7 @@ fn rope_rotation_llama(
                 let k1 = state.k[i * head_size + j + 1]
                 state.k[i * head_size + j] = k0 * fcr - k1 * fci
                 state.k[i * head_size + j + 1] = k0 * fci + k1 * fcr
-    parallelize[head_loop](config.n_heads,cores)
+    parallelize[head_loop](config.n_heads, workers)
 
 
 
@@ -729,7 +729,7 @@ fn transformer(
 
                 vectorize[nelts, xb_accumulate](head_size)
 
-        parallelize[loop_over_heads](config.n_heads,cores)
+        parallelize[loop_over_heads](config.n_heads, workers)
         # Final matrix multiplication to get the output of the attention
         matmul(state.xb2, state.xb, TensorSlice(weights.wo, l))
         # Residual connection back into x
@@ -866,12 +866,11 @@ fn print_usage():
     print("  -n <int>    number of steps to run for, default 256. 0 = max_seq_len")
     print("  -i <string> input prompt")
     print("  -z          tokenizer path")
+    print("  -j          number of workers to use, default num_cores()")
 
 
 fn main() raises:
-    print("num hardware threads: ", num_cores())
-    cores = num_cores()
-    print("SIMD vector width: ", nelts)
+    workers = num_cores()
     var tokenizer = StringRef("tokenizer.bin")
     var checkpoint = StringRef("stories15M.bin")
     var temperature = 0.9
@@ -896,6 +895,8 @@ fn main() raises:
                 rng_seed = atol(args[i + 1])
             if args[i] == "-i":
                 prompt = args[i + 1]
+            if args[i] == "-j":
+                workers = atol(args[i + 1])
             if args[i] == "-t":
                 let val = args[i + 1]
                 temperature = 0.0
@@ -916,13 +917,13 @@ fn main() raises:
         print_usage()
         return
 
+    print("num parallel workers:", workers, " SIMD width:", nelts)
     random.seed(rng_seed)
     var fbuf: FileBuf = FileBuf()
     var tbuf: FileBuf = FileBuf()
     var config: Config = Config()
 
     read_file(checkpoint, fbuf)
-    print("checkpoint size: ", fbuf.size, "[", fbuf.size // 1024 // 1024, "MB ]")
     config_init(config, fbuf)
 
     # negative vocab size is hacky way of signaling unshared weights. bit yikes.
@@ -941,8 +942,8 @@ fn main() raises:
     var tok = Tokenizer(config.vocab_size, tbuf)
 
     # print the layers number and vocab size
-    print("n layers: ", config.n_layers)
-    print("vocab size: ", tok.vocab_size)
+    print("checkpoint size: ", fbuf.size, "[", fbuf.size // 1024 // 1024, "MB ]", 
+        "| n layers:", config.n_layers, "| vocab size:", tok.vocab_size)
 
     # Create and initialize the application RunState
     var state = RunState(config)
