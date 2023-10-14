@@ -21,13 +21,13 @@
 
 FROM ubuntu:20.04
 
-ARG DEFAUL_TZ=America/Los_Angeles
+ARG DEFAULT_TZ=America/Los_Angeles
 ENV DEFAULT_TZ=$DEFAULT_TZ
 ARG MODULAR_HOME=/home/user/.modular
 ENV MODULAR_HOME=$MODULAR_HOME
 
 RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive $DEFAULT_TZ apt-get install -y \
+    && DEBIAN_FRONTEND=noninteractive TZ=$DEFAULT_TZ apt-get install -y \
     tzdata \
     vim \
     sudo \
