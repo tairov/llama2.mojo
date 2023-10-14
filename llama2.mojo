@@ -5,10 +5,10 @@ from math import round
 from memory import memset_zero, memcpy
 from memory.buffer import Buffer
 from memory.unsafe import DTypePointer
-from python import Python
+
 from random import rand
-from read import BufReader, File
-from runtime.llcl import num_cores, Runtime
+from runtime.llcl import num_cores
+
 from sys import argv
 from tensor import Tensor, TensorShape, TensorSpec
 
@@ -431,21 +431,17 @@ struct TransformerWeights:
 
 
 fn read_file(file_name: String, inout buf: FileBuf) raises:
-    let _os = Python.import_module("os")
-    let ff_size = _os.path.getsize(file_name)
-    let cp_size = string.atol(ff_size.to_string())
+    var f_ = open(file_name, "r")
+    let data = f_.read()
+    let cp_size = data._buffer.size
     let cp_buf: BufferPtrType = BufferPtrType.alloc(cp_size)
-    # set window buffer to read binary data from file
-    let f = File(file_name)
-    var reader = BufReader[4096](f ^)
-    var bytes_read = 1
-    var offset = 0
 
-    while bytes_read > 0:
-        let buf = Buffer[4096, DType.uint8](cp_buf.offset(offset))
-        bytes_read = reader.read(buf)
-        offset += bytes_read
-    reader.do_nothing()  # keeps lifetimes working
+    let data_ptr = data._as_ptr().bitcast[DType.uint8]()
+
+    for i in range(cp_size):
+        cp_buf.store(i,data_ptr.load(i))
+    _=data
+
     buf.data = cp_buf
     buf.size = cp_size
     buf.offset = 0
@@ -923,9 +919,11 @@ fn main() raises:
     var tbuf: FileBuf = FileBuf()
     var config: Config = Config()
 
+
+    
     read_file(checkpoint, fbuf)
     config_init(config, fbuf)
-
+    
     # negative vocab size is hacky way of signaling unshared weights. bit yikes.
     let shared_weights = 1 if config.vocab_size > 0 else 0
     config.vocab_size = (
@@ -990,7 +988,7 @@ fn main() raises:
         if token == 1 and token_str[0] == ord(" "):
             token_str = token_str.offset(1)
 
-        print_str(token_str)
+        #print_str(token_str)
 
         # Advance forward
         token = next_token
