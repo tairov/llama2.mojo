@@ -988,7 +988,7 @@ fn main() raises:
         if token == 1 and token_str[0] == ord(" "):
             token_str = token_str.offset(1)
 
-        #print_str(token_str)
+        print_str(token_str)
 
         # Advance forward
         token = next_token
