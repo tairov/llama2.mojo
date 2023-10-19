@@ -32,6 +32,10 @@ At the moment, the following models were successfully executed via `llama2.mojo`
 | stories 260K, 15M, 110M  |
 | Tinyllama-1.1B-Chat-v0.2 |
 
+### extensive benchmark on Apple M1 Max
+
+[mojo vs 6 programming languages](https://engiware.com/benchmark/llama2-ports-extensive-benchmarks-mac-m1-max.html)
+
 ### benchmark (updated)
 
 | Model           | [llama2.c](https://github.com/karpathy/llama2.c) (OMP/parallelized) | **llama2.mojo** (parallelized) | llama2.mojo (naive matmul) | [llama2.py](https://github.com/tairov/llama2.py) |
