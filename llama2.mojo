@@ -5,7 +5,6 @@ from math import round
 from memory import memset_zero, memcpy
 from memory.buffer import Buffer
 from memory.unsafe import DTypePointer
-from python import Python
 from random import rand
 from read import BufReader, File
 from runtime.llcl import num_cores, Runtime
@@ -431,10 +430,10 @@ struct TransformerWeights:
 
 
 fn read_file(file_name: String, inout buf: FileBuf) raises:
-    let _os = Python.import_module("os")
-    let ff_size = _os.path.getsize(file_name)
-    let cp_size = string.atol(ff_size.to_string())
-    let cp_buf: BufferPtrType = BufferPtrType.alloc(cp_size)
+    let ff = open(file_name, "r")
+    let ff_size = len(ff.read())
+    ff.close()
+    let cp_buf: BufferPtrType = BufferPtrType.alloc(ff_size)
     # set window buffer to read binary data from file
     let f = File(file_name)
     var reader = BufReader[4096](f ^)
@@ -447,7 +446,7 @@ fn read_file(file_name: String, inout buf: FileBuf) raises:
         offset += bytes_read
     reader.do_nothing()  # keeps lifetimes working
     buf.data = cp_buf
-    buf.size = cp_size
+    buf.size = ff_size
     buf.offset = 0
     return None
 
