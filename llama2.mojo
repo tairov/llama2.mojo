@@ -430,7 +430,7 @@ struct TransformerWeights:
 
 
 fn read_file(file_name: String, inout buf: FileBuf) raises:
-    let ff = open(file_name, "r")
+    var ff = open(file_name, "r")
     let ff_size = len(ff.read())
     ff.close()
     let cp_buf: BufferPtrType = BufferPtrType.alloc(ff_size)
