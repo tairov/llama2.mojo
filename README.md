@@ -60,6 +60,9 @@ and [configured mojo on your environment](https://docs.modular.com/mojo/manual/g
 
 Or you can use [mojo playground](https://playground.modular.com/) to run this model.
 
+## try the 🔥 magic
+HuggingFace - https://huggingface.co/spaces/radames/Gradio-llama2.mojo
+
 ## feel the 🔥 magic
 
 First, navigate to the folder when you keep your projects and clone this repository to this folder:
