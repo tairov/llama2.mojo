@@ -431,11 +431,13 @@ struct TransformerWeights:
 fn read_file(file_name: String, inout buf: FileBuf) raises:
     var fd = open(file_name, "r")
     let data = fd.read()
+    fd.close()
+    
     let cp_size = data._buffer.size
     let cp_buf: BufferPtrType = BufferPtrType.alloc(cp_size)
 
     let data_ptr = data._as_ptr().bitcast[DType.uint8]()
-
+    
     for i in range(cp_size):
         cp_buf.store(i,data_ptr.load(i))
     _=data
