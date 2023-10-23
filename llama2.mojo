@@ -1007,8 +1007,13 @@ fn main() raises:
                 next_token = argmax(state.logits)
             else:
                 # Apply the temperature to the logits
-                for q in range(config.vocab_size):
-                    state.logits[q] = state.logits[q] / temperature
+                @parameter
+                fn v_temperature[_nelts: Int](q: Int):
+                    state.logits.simd_store[_nelts](
+                        q, state.logits.simd_load[_nelts](q) / temperature
+                    )
+
+                vectorize[nelts, v_temperature](config.vocab_size)
 
                 # Apply softmax to the logits to get the probabilities for the next token
                 softmax(state.logits)
