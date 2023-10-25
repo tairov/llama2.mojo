@@ -1,8 +1,9 @@
 from algorithm import sum
-from algorithm import vectorize, parallelize
+from algorithm import vectorize, parallelize, vectorize_unroll
+from algorithm import Static1DTileUnitFunc as Tile1DFunc
 from builtin import string
 from math import round
-from memory import memset_zero, memcpy
+from memory import memset_zero, memcpy, stack_allocation
 from memory.buffer import Buffer
 from memory.unsafe import DTypePointer
 from python import Python
@@ -572,29 +573,102 @@ fn matmul_parallelized(C: BufferPtrFloat32,A: BufferPtrFloat32,B: BufferPtrFloat
 
     parallelize[compute_row](rows, workers)
 
-    
 
-    
-    
+@always_inline
+fn tile_parallel[tiled_fn: Tile1DFunc, tile: Int](end: Int):
+    fn row(i: Int):
+        let io = i * tile
+        tiled_fn[tile](io)
+
+    parallelize[row](end // tile, workers)
+
+    # deal with tail elements
+    if end % tile != 0:
+        tiled_fn[tile](end - tile)
+
+
+@always_inline
+fn matmul_tiled(
+    C: BufferPtrFloat32,
+    A: BufferPtrFloat32,
+    B: BufferPtrFloat32,
+    rows: Int,
+    cols: Int,
+):
+    # alias nelts = simdwidthof[DType.float32]()
+    alias tile_j = 1 * nelts
+    alias tile_i = 1
+
+    @parameter
+    fn calc_tiles_row[tile_i: Int](io: Int):
+        var accumulator = stack_allocation[tile_j, DType.float32]()
+        memset_zero(accumulator, tile_j)
+
+        @parameter
+        fn calc_cols(jo: Int):
+            @parameter
+            fn calc_row[i: Int]():
+                @parameter
+                fn calc_col[nelts: Int](j: Int):
+                    accumulator.simd_store[nelts](
+                        i * nelts,
+                        accumulator.simd_load[nelts](i * nelts)
+                        + A.simd_load[nelts](jo + j)
+                        * B.simd_load[nelts]((io + i) * cols + jo + j),
+                    )
+
+                vectorize_unroll[nelts, tile_j // nelts, calc_col](tile_j)
+
+            unroll[tile_i, calc_row]()
+
+        for jo in range(0, cols - cols % tile_j, tile_j):
+            calc_cols(jo)
+        # deal with tail elements
+        if cols % tile_j != 0:
+            let temp = cols - cols % tile_j
+
+            @unroll
+            for i in range(tile_i):
+
+                @parameter
+                fn calc_tail_col[_nelts: Int](jo: Int):
+                    let j = temp + jo
+                    accumulator.simd_store[_nelts](
+                        i * nelts,
+                        accumulator.simd_load[_nelts](i * nelts)
+                        + A.simd_load[_nelts](j)
+                        * B.simd_load[_nelts]((io + i) * cols + j),
+                    )
+
+                vectorize[nelts, calc_tail_col](cols % tile_j)
+
+        @unroll
+        for i in range(tile_i):
+            C.store(io + i, accumulator.simd_load[nelts](i * nelts).reduce_add())
+
+    tile_parallel[calc_tiles_row, tile_i](rows)
+
+
 @always_inline
 fn matmul(C: TensorF32, A: TensorF32, B: TensorF32) raises:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_dimension_checks(A.shape(), B.shape())
-    matmul_parallelized(C.data(), A.data(), B.data(), B.dim(0), B.dim(1))
+    matmul_tiled(C.data(), A.data(), B.data(), B.dim(0), B.dim(1))
 
 
 @always_inline
 fn matmul(C: TensorF32, A: TensorF32, B: TensorSlice) raises:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_dimension_checks(A.shape(), B.shape())
-    matmul_parallelized(C.data(), A.data(), B.data(), B.dim(0), B.dim(1))
+    matmul_tiled(C.data(), A.data(), B.data(), B.dim(0), B.dim(1))
 
 
 @always_inline
 fn matmul(C: TensorSlice, A: TensorF32, B: TensorSlice) raises:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_dimension_checks(A.shape(), B.shape())
-    matmul_parallelized(C.data(), A.data(), B.data(), B.dim(0), B.dim(1))
+    matmul_tiled(C.data(), A.data(), B.data(), B.dim(0), B.dim(1))
+
 
 
 fn matmul_dimension_checks(a: TensorShape, b: TensorShape) raises:
