@@ -21,7 +21,7 @@ import time
 
 var workers = 0
 
-alias nelts = (2*simdwidthof[DType.float32]())
+alias nelts = (4*simdwidthof[DType.float32]())
 
 alias PointerString = Pointer[UInt8]
 alias BufferPtrType = DTypePointer[DType.uint8]
