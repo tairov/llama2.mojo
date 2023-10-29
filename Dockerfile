@@ -34,31 +34,33 @@ RUN apt-get update \
     curl \ 
     python3 \
     pip \
-    wget \
-    && python3 -m pip install \
-    jupyterlab \
-    ipykernel \
-    matplotlib \
-    ipywidgets \
-    gradio 
+    wget
 
 RUN curl -fsSL https://repo.anaconda.com/miniconda/Miniconda3-py38_23.5.2-0-Linux-x86_64.sh > /tmp/miniconda.sh \
     && chmod +x /tmp/miniconda.sh \
     && /tmp/miniconda.sh -b -p /opt/conda
 
+ENV PATH=/opt/conda/bin:$PATH
+RUN conda init
+
 ARG AUTH_KEY=DEFAULT_KEY
 ENV AUTH_KEY=$AUTH_KEY
 
-RUN curl https://get.modular.com | MODULAR_AUTH=$AUTH_KEY sh - \
-    && modular install mojo 
+RUN curl https://get.modular.com | MODULAR_AUTH=$AUTH_KEY sh -
+RUN modular auth $AUTH_KEY && \
+    modular install mojo 
 
 RUN useradd -m -u 1000 user
 RUN chown -R user $MODULAR_HOME
 
-ENV PATH="$PATH:/opt/conda/bin:$MODULAR_HOME/pkg/packages.modular.com_mojo/bin"
+ENV PATH="$MODULAR_HOME/pkg/packages.modular.com_mojo/bin:$PATH"
 
-RUN conda init 
-RUN pip install gradio
+RUN pip install \
+    jupyterlab \
+    ipykernel \
+    matplotlib \
+    ipywidgets \
+    gradio 
 
 USER user
 WORKDIR $HOME/app
