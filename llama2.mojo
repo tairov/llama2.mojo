@@ -1,8 +1,9 @@
 from algorithm import sum
-from algorithm import vectorize, parallelize, unroll
+from algorithm import vectorize, parallelize, unroll, vectorize_unroll
+from algorithm import Static1DTileUnitFunc as Tile1DFunc
 from builtin import string
 from math import round
-from memory import memset_zero, memcpy
+from memory import memset_zero, memcpy, stack_allocation
 from memory.buffer import Buffer
 from memory.unsafe import DTypePointer
 from python import Python
@@ -21,7 +22,7 @@ import time
 
 var workers = 0
 
-alias nelts = (4*simdwidthof[DType.float32]())
+alias nelts = (4 * simdwidthof[DType.float32]())
 
 alias PointerString = Pointer[UInt8]
 alias BufferPtrType = DTypePointer[DType.uint8]
@@ -360,7 +361,6 @@ struct RunState:
     var key_cache: TensorF32  # (layer, seq_len, dim)
     var value_cache: TensorF32  # (layer, seq_len, dim)
 
-
     fn __init__(inout self, config: Config) raises:
         self.x = TensorF32(config.dim)
         self.xb = TensorF32(config.dim)
@@ -376,7 +376,6 @@ struct RunState:
         # Initialize with placeholders. The real tensors reference layer and position during forward pass.
         self.k = TensorSlice(TensorF32(TensorShape(1, config.kv_dim)), 1)
         self.v = TensorSlice(TensorF32(TensorShape(1, config.kv_dim)), 1)
-
 
 
 struct TransformerWeights:
@@ -552,6 +551,19 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
 
 
 @always_inline
+fn tile_parallel[tiled_fn: Tile1DFunc, tile: Int](end: Int):
+    fn row(i: Int):
+        let io = i * tile
+        tiled_fn[tile](io)
+
+    parallelize[row](end // tile, workers)
+
+    # deal with tail elements
+    if end % tile != 0:
+        tiled_fn[tile](end - tile)
+
+
+@always_inline
 fn batch_matmul[
     n: Int
 ](
@@ -561,45 +573,92 @@ fn batch_matmul[
     rows: Int,
     cols: Int,
 ):
+    alias nelts = simdwidthof[DType.float32]()
+    alias tile_j = 2**n * nelts
+    alias tile_i = 8 // n
+
+    alias stack_size = tile_i * nelts
+
     @parameter
-    fn compute_row(i: Int):
-        var tmp = StaticTuple[n, SIMD[DType.float32, nelts]]()
-        @parameter
-        fn init[k: Int]():
-            tmp[k] = SIMD[DType.float32, nelts](0)
-        unroll[n, init]()
-        let row_offset = i * cols
+    fn calc_tiles_row[tile_i: Int](io: Int):
+        var accumulator = StaticTuple[n, BufferPtrFloat32]()
 
         @parameter
-        fn dot[_nelts: Int](j: Int):
-            if _nelts < nelts:  # take care of tail array elements with length <  nelts
-                let a = A.simd_load[_nelts](j)
+        fn _init[k: Int]():
+            accumulator[k] = stack_allocation[stack_size, DType.float32]()
+            memset_zero(accumulator[k], stack_size)
+
+        unroll[n, _init]()
+
+        var temp_a = stack_allocation[tile_j, DType.float32]()
+
+        @parameter
+        fn calc_cols(jo: Int):
+            @parameter
+            fn copy_a[nelts: Int](j: Int):
+                temp_a.simd_store[nelts](j, A.simd_load[nelts](jo + j))
+
+            vectorize_unroll[nelts, tile_j // nelts, copy_a](tile_j)
+
+            @parameter
+            fn calc_row[i: Int]():
+                @parameter
+                fn calc_col[nelts: Int](j: Int):
+                    @parameter
+                    fn _multiply[k: Int]():
+                        accumulator[k].simd_store[nelts](
+                            i * nelts,
+                            accumulator[k].simd_load[nelts](i * nelts)
+                            + temp_a.simd_load[nelts](j)
+                            * B[k].simd_load[nelts]((io + i) * cols + jo + j),
+                        )
+
+                    unroll[n, _multiply]()
+
+                vectorize_unroll[nelts, tile_j // nelts, calc_col](tile_j)
+
+            unroll[tile_i, calc_row]()
+
+        for jo in range(0, cols - cols % tile_j, tile_j):
+            calc_cols(jo)
+
+        # deal with tail elements
+        if cols % tile_j != 0:
+            let temp = cols - cols % tile_j
+
+            @unroll
+            for i in range(tile_i):
 
                 @parameter
-                fn _multiply_tail[k: Int]():
-                    tmp[k][0] += (
-                        a * B[k].simd_load[_nelts](row_offset + j)
-                    ).reduce_add()
+                fn calc_tail_col[_nelts: Int](jo: Int):
+                    let j = temp + jo
 
-                unroll[n, _multiply_tail]()
-            else:
-                let a = A.simd_load[nelts](j)
+                    @parameter
+                    fn _multiply[k: Int]():
+                        accumulator[k].simd_store[_nelts](
+                            i * nelts,
+                            accumulator[k].simd_load[_nelts](i * nelts)
+                            + A.simd_load[_nelts](j)
+                            * B[k].simd_load[_nelts]((io + i) * cols + j),
+                        )
 
-                @parameter
-                fn _multiply[k: Int]():
-                    tmp[k] += a * B[k].simd_load[nelts](row_offset + j)
+                    unroll[n, _multiply]()
 
-                unroll[n, _multiply]()
-
-        vectorize[nelts, dot](cols)
+                vectorize[nelts, calc_tail_col](cols % tile_j)
 
         @parameter
-        fn _reduce[k: Int]():
-            C[k].store(i, tmp[k].reduce_add())
+        fn copy_values[i: Int]():
+            @parameter
+            fn _reduce[k: Int]():
+                C[k].store(
+                    io + i, accumulator[k].simd_load[nelts](i * nelts).reduce_add()
+                )
 
-        unroll[n, _reduce]()
+            unroll[n, _reduce]()
 
-    parallelize[compute_row](rows, workers)
+        unroll[tile_i, copy_values]()
+
+    tile_parallel[calc_tiles_row, tile_i](rows)
 
 
 @always_inline
@@ -633,7 +692,9 @@ fn matmul(C: TensorSlice, A: TensorF32, B: TensorSlice) raises:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_dimension_checks(A.shape(), B.shape())
     batch_matmul[1](
-        StaticTuple[1, BufferPtrFloat32](C.data(),),
+        StaticTuple[1, BufferPtrFloat32](
+            C.data(),
+        ),
         A.data(),
         StaticTuple[1, BufferPtrFloat32](B.data()),
         B.dim(0),
@@ -661,8 +722,9 @@ fn rope_rotation_llama(
 ) -> None:
     # stories model, llama2
     let head_size = config.head_size
+
     @parameter
-    fn head_loop(i:Int):
+    fn head_loop(i: Int):
         # Simple vectorization with (head_size // 2) steps gave junk transformer output.
         # Maybe because the nelt ranges end up overlapping between the steps.
         for j in range(0, config.head_size, 2):
@@ -677,8 +739,8 @@ fn rope_rotation_llama(
                 let k1 = state.k[i * head_size + j + 1]
                 state.k[i * head_size + j] = k0 * fcr - k1 * fci
                 state.k[i * head_size + j + 1] = k0 * fci + k1 * fcr
-    parallelize[head_loop](config.n_heads, workers)
 
+    parallelize[head_loop](config.n_heads, workers)
 
 
 @always_inline
@@ -745,7 +807,7 @@ fn transformer(
 
         # Multihead attention. Iterate over all heads in parallel.
         @parameter
-        fn loop_over_heads(h:Int):
+        fn loop_over_heads(h: Int):
             # Get the query vector for this head
             let q_offset = h * head_size
 
@@ -1012,8 +1074,17 @@ fn main() raises:
     var tok = Tokenizer(config.vocab_size, tbuf)
 
     # print the layers number and vocab size
-    print("checkpoint size: ", fbuf.size, "[", fbuf.size // 1024 // 1024, "MB ]", 
-        "| n layers:", config.n_layers, "| vocab size:", tok.vocab_size)
+    print(
+        "checkpoint size: ",
+        fbuf.size,
+        "[",
+        fbuf.size // 1024 // 1024,
+        "MB ]",
+        "| n layers:",
+        config.n_layers,
+        "| vocab size:",
+        tok.vocab_size,
+    )
 
     # Create and initialize the application RunState
     var state = RunState(config)
