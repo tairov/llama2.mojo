@@ -280,11 +280,24 @@ struct Tokenizer:
 
         # read vocab_scores & vocab values (tokens)
         for i in range(0, self.vocab_size):
-            self.vocab_scores.store(i, read_val_float32(buf))
+            let score = read_val_float32(buf)
             let slen = read_val_int(buf)
-            self.vocab.store(i, read_val_str(buf, slen))
-
+            let token = read_val_str(buf, slen)
+            self.store_token(i, token, score)
         return None
+
+    fn __del__(owned self):
+        for i in range(0, self.vocab_size):
+            self.vocab[i].free()
+        self.vocab.free()
+        self.vocab_scores.free()
+        self.sorted_vocab.free()
+
+    fn store_token(
+        inout self, index: Int, owned token: PointerString, score: Float32
+    ) -> None:
+        self.vocab_scores.store(index, score)
+        self.vocab.store(index, token)
 
     # sort vocab by string_compare
     fn sort(inout self) -> None:
@@ -374,7 +387,6 @@ struct RunState:
         # Initialize with placeholders. The real tensors reference layer and position during forward pass.
         self.k = TensorSlice(TensorF32(TensorShape(1, config.kv_dim)), 1)
         self.v = TensorSlice(TensorF32(TensorShape(1, config.kv_dim)), 1)
-
 
 
 struct TransformerWeights:
@@ -847,12 +859,11 @@ fn sample(probabilities: TensorF32) -> Int:
     let n = probabilities.dim(0)
     # Sample index from probabilities, they must sum to 1
     # get random value within (min, max) float32 range
-    let r = DTypePointer[DType.float32].alloc(1)
-    rand[DType.float32](r, 1)
+    let r = rand[DType.float32](1)
     var cdf: Float32 = 0.0
     for i in range(n):
         cdf += probabilities[i]
-        if r.load(0) < cdf:
+        if r[0] < cdf:
             return i
     return n - 1  # In case of rounding errors
 
@@ -861,7 +872,6 @@ fn bpe_encode(inout tokens: DynamicVector[Int], text: String, inout tok: Tokeniz
     for pos in range(len(text)):
         let char = str_to_ptr(text[pos])
         let id = tok.find(char)
-
         if id == -1:
             print("Not a good prompt token at pos ", pos)
             return
