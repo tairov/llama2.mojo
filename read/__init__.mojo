@@ -96,7 +96,7 @@ struct File:
 
     fn read[D: Dim](self, buffer: Buffer[D, DType.uint8]) raises -> Int:
         return fread(
-            buffer.data.as_scalar_pointer(), sizeof[UInt8](), BUF_SIZE, self.handle
+            buffer.data._as_scalar_pointer(), sizeof[UInt8](), BUF_SIZE, self.handle
         ).to_int()
 
 
