@@ -429,7 +429,7 @@ struct TransformerWeights:
 
 
 fn read_file(file_name: String, inout buf: FileBuf) raises:
-    let fd = open(file_name, "r")
+    var fd = open(file_name, "r")
     let data = fd.read()
     fd.close()
 
@@ -440,7 +440,9 @@ fn read_file(file_name: String, inout buf: FileBuf) raises:
     
     for i in range(cp_size):
         cp_buf.store(i,data_ptr.load(i))
-    _=data
+    
+    # don't free data
+    _ = data
 
     buf.data = cp_buf
     buf.size = cp_size
