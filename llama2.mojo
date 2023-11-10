@@ -2,7 +2,7 @@ from algorithm import sum
 from algorithm import vectorize, parallelize, unroll
 from builtin import string
 from math import round
-from memory import memset_zero, memcpy
+from memory import memset_zero, memcpy, stack_allocation
 from memory.buffer import Buffer
 from memory.unsafe import DTypePointer
 from random import rand
@@ -26,6 +26,31 @@ alias BufferPtrType = DTypePointer[DType.uint8]
 alias BufferPtrFloat32 = DTypePointer[DType.float32]
 alias PointerStrings = Pointer[PointerString]
 alias TensorF32 = Tensor[DType.float32]
+
+
+@register_passable
+struct Accumulator[T: DType, width: Int]:
+    # ideally this could be SIMD[T, width] but the width
+    # in accumulate() method is compared by identity
+    var data: DTypePointer[T]
+
+    @always_inline
+    fn __init__() -> Self:
+        # allocate a DTypePointer on stack that doesn't need to be freed.
+        let data = stack_allocation[width, T]()
+        memset_zero(data, width)
+        return Self {data: data}
+
+    @always_inline
+    fn accumulate[_width: Int](inout self, val: SIMD[T, _width]) -> None:
+        # This is a hack to make sure both SIMD have _width length.
+        # SIMD[T, width] += SIMD[T, _width] is always an error.
+        let newVal = self.data.simd_load[_width]() + val
+        self.data.simd_store[_width](newVal)
+
+    @always_inline
+    fn total(self) -> SIMD[T, 1]:
+        return self.data.simd_load[width]().reduce_add()
 
 
 struct TensorSlice:
@@ -499,18 +524,15 @@ fn rmsnorm(
     inout o: BufferPtrFloat32, x: BufferPtrFloat32, weight: BufferPtrFloat32, size: Int
 ) -> None:
     # Calculate sum of squares
-    var tmp = SIMD[DType.float32, nelts](0)
+    var tmp = Accumulator[DType.float32, nelts]()
 
     @parameter
     fn _sum2[_nelts: Int](j: Int):
-        if _nelts < nelts:
-            tmp[0] += (x.offset(j).simd_load[_nelts](0) ** 2).reduce_add()
-        else:
-            tmp += x.offset(j).simd_load[nelts](0) ** 2
+        tmp.accumulate(x.offset(j).simd_load[_nelts](0) ** 2)
 
     vectorize[nelts, _sum2](size)
 
-    var ss: Float32 = tmp.reduce_add()
+    var ss: Float32 = tmp.total()
     ss = ss / size + 1e-5
     ss = 1.0 / math.sqrt(ss)
 
@@ -550,17 +572,17 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
 
     vectorize[nelts, _max](end - start)
 
-    var ssum: Float32 = 0.0
+    var acc = Accumulator[DType.float32, nelts]()
 
     @parameter
     fn _exp[_nelts: Int](ii: Int):
-        x.simd_store[_nelts](
-            start + ii, math.exp(x.simd_load[_nelts](start + ii) - max_val)
-        )
-        ssum += x.simd_load[_nelts](start + ii).reduce_add()
+        let val = math.exp(x.simd_load[_nelts](start + ii) - max_val)
+        x.simd_store[_nelts](start + ii, val)
+        acc.accumulate(val)
 
     vectorize[nelts, _exp](end - start)
 
+    var ssum = acc.total()
     @parameter
     fn _norm[_nelts: Int](ii: Int):
         x.simd_store[_nelts](start + ii, x.simd_load[_nelts](start + ii) / ssum)
@@ -580,41 +602,26 @@ fn batch_matmul[
 ):
     @parameter
     fn compute_row(i: Int):
-        var tmp = StaticTuple[n, SIMD[DType.float32, nelts]]()
-        @parameter
-        fn init[k: Int]():
-            tmp[k] = SIMD[DType.float32, nelts](0)
-        unroll[n, init]()
+        var tmp = StaticTuple[n, Accumulator[DType.float32, nelts]]()
+        @unroll
+        for k in range(n):
+            tmp[k] = Accumulator[DType.float32, nelts]()
+
         let row_offset = i * cols
 
         @parameter
         fn dot[_nelts: Int](j: Int):
-            if _nelts < nelts:  # take care of tail array elements with length <  nelts
-                let a = A.simd_load[_nelts](j)
+            let a = A.simd_load[_nelts](j)
 
-                @parameter
-                fn _multiply_tail[k: Int]():
-                    tmp[k][0] += (
-                        a * B[k].simd_load[_nelts](row_offset + j)
-                    ).reduce_add()
-
-                unroll[n, _multiply_tail]()
-            else:
-                let a = A.simd_load[nelts](j)
-
-                @parameter
-                fn _multiply[k: Int]():
-                    tmp[k] += a * B[k].simd_load[nelts](row_offset + j)
-
-                unroll[n, _multiply]()
+            @unroll
+            for k in range(n):
+                tmp[k].accumulate(a * B[k].simd_load[_nelts](row_offset + j))
 
         vectorize[nelts, dot](cols)
 
-        @parameter
-        fn _reduce[k: Int]():
-            C[k].store(i, tmp[k].reduce_add())
-
-        unroll[n, _reduce]()
+        @unroll
+        for k in range(n):
+            C[k].store(i, tmp[k].total())
 
     parallelize[compute_row](rows, workers)
 
