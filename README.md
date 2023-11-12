@@ -39,7 +39,16 @@ At the moment, the following models were successfully executed via `llama2.mojo`
 
 ### benchmark (updated)
 
-*Ubuntu 20.04, Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz, 6 cores, 12 threads*
+**Mac M1 Max (6 threads)**
+
+| Model           | [llama2.c](https://github.com/karpathy/llama2.c) (OMP/parallelized) | **llama2.mojo** (parallelized) | llama.cpp (cpu) | [llama2.py](https://github.com/tairov/llama2.py) |
+|-----------------|---------------------------------------------------------------------|--------------------------------|-----------------|--------------------------------------------------|
+| stories15M.bin  | 730 tok/s                                                           | 1025 tok/s                     | 890 tok/s       | 38 tok/s (pypi)                                  | 
+| stories42M.bin  | 270 tok/s                                                           | 490 tok/s                      | 420 tok/s       | -                                                | 
+| stories110M.bin | 102 tok/s                                                           | 195 tok/s                      | 187 tok/s       | -                                                | 
+| TinyLlama-1.1B  | -                                                                   | 23 tok/s                       | -               | -                                                | 
+
+**Ubuntu 20.04, Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz, 6 cores, 12 threads**
 
 | Model           | [llama2.c](https://github.com/karpathy/llama2.c) (OMP/parallelized) | **llama2.mojo** (parallelized) | llama2.mojo (naive matmul) | [llama2.py](https://github.com/tairov/llama2.py) |
 |-----------------|---------------------------------------------------------------------|--------------------------------|----------------------------|--------------------------------------------------|
