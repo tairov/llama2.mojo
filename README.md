@@ -15,15 +15,6 @@ now outperforms the original `llama2.c` compiled in `runfast` mode out of the bo
 This showcases the potential of hardware-level optimizations through Mojo's advanced features.
 I think this also can help us to see how far can we go with the original `llama2.c` hardware optimizations.
 
-## performance
-
-Since there were some debates was this comparison legit or not I did some research and found that in `runfast`
-mode `llama2.c`
-includes multiple optimizations like aggressive vectorization, which makes comparison fair with Mojo SIMD vectorization.
-
-UPD. further improvements of `llama2.mojo` parallelization make it working slightly better or the same as C on different
-models.
-
 ## supported models
 
 At the moment, the following models were successfully executed via `llama2.mojo`:
