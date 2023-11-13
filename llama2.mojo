@@ -10,6 +10,10 @@ from runtime.llcl import num_cores
 from sys import argv
 from tensor import Tensor, TensorShape, TensorSpec
 
+# Benchmarking
+from autotune import autotune, search
+from benchmark import Benchmark
+
 # The SIMD vector width.
 from sys.info import simdwidthof
 import math
@@ -19,7 +23,7 @@ import time
 
 var workers = 0
 
-alias nelts = (4*simdwidthof[DType.float32]())
+alias nelts = (4 * simdwidthof[DType.float32]())
 
 alias PointerString = Pointer[UInt8]
 alias BufferPtrType = DTypePointer[DType.uint8]
@@ -371,7 +375,6 @@ struct RunState:
     var key_cache: TensorF32  # (layer, seq_len, dim)
     var value_cache: TensorF32  # (layer, seq_len, dim)
 
-
     fn __init__(inout self, config: Config) raises:
         self.x = TensorF32(config.dim)
         self.xb = TensorF32(config.dim)
@@ -560,10 +563,22 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
 
     vectorize[nelts, _norm](end - start)
 
+@adaptive
+fn batch_matmul_2(
+    C: StaticTuple[2, BufferPtrFloat32],
+    A: BufferPtrFloat32,
+    B: StaticTuple[2, BufferPtrFloat32],
+    rows: Int,
+    cols: Int,
+    /
+):
+    alias simd_multiplier = autotune(1, 2, 4, 8, 16)
+    alias nelts = simd_multiplier * simdwidthof[DType.float32]()
+    batch_matmul[2, nelts](C, A, B, rows, cols)
 
 @always_inline
 fn batch_matmul[
-    n: Int
+    n: Int, nelts: Int
 ](
     C: StaticTuple[n, BufferPtrFloat32],
     A: BufferPtrFloat32,
@@ -574,9 +589,11 @@ fn batch_matmul[
     @parameter
     fn compute_row(i: Int):
         var tmp = StaticTuple[n, SIMD[DType.float32, nelts]]()
+
         @parameter
         fn init[k: Int]():
             tmp[k] = SIMD[DType.float32, nelts](0)
+
         unroll[n, init]()
         let row_offset = i * cols
 
@@ -609,14 +626,14 @@ fn batch_matmul[
 
         unroll[n, _reduce]()
 
-    parallelize[compute_row](rows, workers)
+    parallelize[compute_row](rows, 6)
 
 
 @always_inline
 fn matmul(C: TensorF32, A: TensorF32, B: TensorF32) raises:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_dimension_checks(A.shape(), B.shape())
-    batch_matmul[1](
+    batch_matmul[1, nelts](
         StaticTuple[1, BufferPtrFloat32](C.data()),
         A.data(),
         StaticTuple[1, BufferPtrFloat32](B.data()),
@@ -629,7 +646,7 @@ fn matmul(C: TensorF32, A: TensorF32, B: TensorF32) raises:
 fn matmul(C: TensorF32, A: TensorF32, B: TensorSlice) raises:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_dimension_checks(A.shape(), B.shape())
-    batch_matmul[1](
+    batch_matmul[1, nelts](
         StaticTuple[1, BufferPtrFloat32](C.data()),
         A.data(),
         StaticTuple[1, BufferPtrFloat32](B.data()),
@@ -642,8 +659,10 @@ fn matmul(C: TensorF32, A: TensorF32, B: TensorSlice) raises:
 fn matmul(C: TensorSlice, A: TensorF32, B: TensorSlice) raises:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_dimension_checks(A.shape(), B.shape())
-    batch_matmul[1](
-        StaticTuple[1, BufferPtrFloat32](C.data(),),
+    batch_matmul[1, nelts](
+        StaticTuple[1, BufferPtrFloat32](
+            C.data(),
+        ),
         A.data(),
         StaticTuple[1, BufferPtrFloat32](B.data()),
         B.dim(0),
@@ -671,8 +690,9 @@ fn rope_rotation_llama(
 ) -> None:
     # stories model, llama2
     let head_size = config.head_size
+
     @parameter
-    fn head_loop(i:Int):
+    fn head_loop(i: Int):
         # Simple vectorization with (head_size // 2) steps gave junk transformer output.
         # Maybe because the nelt ranges end up overlapping between the steps.
         for j in range(0, config.head_size, 2):
@@ -687,8 +707,8 @@ fn rope_rotation_llama(
                 let k1 = state.k[i * head_size + j + 1]
                 state.k[i * head_size + j] = k0 * fcr - k1 * fci
                 state.k[i * head_size + j + 1] = k0 * fci + k1 * fcr
-    parallelize[head_loop](config.n_heads, workers)
 
+    parallelize[head_loop](config.n_heads, workers)
 
 
 @always_inline
@@ -699,6 +719,15 @@ fn transformer(
     inout state: RunState,
     weights: TransformerWeights,
 ) raises -> None:
+    # Batch matmul with batch_1
+    alias best_batch_matmul_2: batch_matmul_2_fn_sig_type
+
+    search[
+        batch_matmul_2_fn_sig_type,
+        VariadicList(batch_matmul_2.__adaptive_set),
+        batch_matmul_evaluator -> best_batch_matmul_2,
+    ]()
+
     # A few convenience variables
     let dim = config.dim
     let hidden_dim = config.hidden_dim
@@ -723,7 +752,7 @@ fn transformer(
         state.k = TensorSlice(state.key_cache, l, pos)
         state.v = TensorSlice(state.value_cache, l, pos)
         if kv_dim == dim:
-            batch_matmul[3](
+            batch_matmul[3, nelts](
                 StaticTuple[3, BufferPtrFloat32](
                     state.q.data(), state.k.data(), state.v.data()
                 ),
@@ -738,7 +767,7 @@ fn transformer(
             )
         else:
             matmul(state.q, state.xb, TensorSlice(weights.wq, l))
-            batch_matmul[2](
+            best_batch_matmul_2(
                 StaticTuple[2, BufferPtrFloat32](state.k.data(), state.v.data()),
                 state.xb.data(),
                 StaticTuple[2, BufferPtrFloat32](
@@ -755,7 +784,7 @@ fn transformer(
 
         # Multihead attention. Iterate over all heads in parallel.
         @parameter
-        fn loop_over_heads(h:Int):
+        fn loop_over_heads(h: Int):
             # Get the query vector for this head
             let q_offset = h * head_size
 
@@ -812,7 +841,7 @@ fn transformer(
         rmsnorm(state.xb, state.x, TensorSlice(weights.rms_ffn_weight, l))
 
         # Calculate self.w1(x) and self.w3(x) for FFN
-        batch_matmul[2](
+        best_batch_matmul_2(
             StaticTuple[2, BufferPtrFloat32](state.hb.data(), state.hb2.data()),
             state.xb.data(),
             StaticTuple[2, BufferPtrFloat32](
@@ -946,6 +975,69 @@ fn print_usage():
     print("  -z          tokenizer path")
     print("  -j          number of workers to use, default num_cores()")
 
+alias batch_matmul_2_fn_sig_type = fn(
+    StaticTuple[2, BufferPtrFloat32],
+    BufferPtrFloat32,
+    StaticTuple[2, BufferPtrFloat32],
+    Int,
+    Int
+    ) -> None
+
+
+fn batch_matmul_evaluator(funcs: Pointer[batch_matmul_2_fn_sig_type], size: Int) -> Int:
+    print("matmul_evaluator, number of candidates: ", size)
+
+    let eval_begin: Int = time.now()
+
+    # This size is picked at random, in real code we could use a real size
+    # distribution here.
+    let c_dims = StaticIntTuple[2](288, 0)
+    let a_dims = StaticIntTuple[2](288, 0)
+    let b_dims = StaticIntTuple[2](288, 288)
+    print("Optimizing for size:", "C: ", c_dims, "A: ", a_dims, "B: ", b_dims)
+
+    var best_idx: Int = -1
+    var best_time: Int = -1
+
+    alias eval_iterations = 10
+    alias eval_samples = 10
+    
+    var C = BufferPtrFloat32.alloc(c_dims[0])
+    var A = BufferPtrFloat32.alloc(a_dims[0])
+    var B = BufferPtrFloat32.alloc(b_dims[0] * b_dims[1])
+    memset_zero(A, a_dims[0])
+    memset_zero(B, b_dims[0] * b_dims[1])
+    memset_zero(C, c_dims[0])
+
+    # Find the function that's the fastest on the size we're optimizing for
+    for f_idx in range(size):
+        let func = funcs.load(f_idx)
+
+        @always_inline
+        @parameter
+        fn wrapper():
+            func(StaticTuple[2, BufferPtrFloat32](C, C), A, StaticTuple[2, BufferPtrFloat32](B, B), b_dims[0], b_dims[1])
+        let cur_time = Benchmark(1, 100_000, 500_000_000, 1000_000_000).run[wrapper]()
+
+        if best_idx < 0:
+            best_idx = f_idx
+            best_time = cur_time
+        if best_time > cur_time:
+            best_idx = f_idx
+            best_time = cur_time
+
+    let eval_end: Int = time.now()
+    # Prevent matrices from being destroyed before we finished benchmarking them.
+    A.free()
+    B.free()
+    C.free()
+
+    # _ = (A, B, C)
+
+    print("Time spent in batch_matmul_evaluator, ms:", (eval_end - eval_begin) // 1000000)
+    print("Best candidate idx:", best_idx)
+
+    return best_idx
 
 fn main() raises:
     workers = num_cores()
@@ -1020,8 +1112,17 @@ fn main() raises:
     var tok = Tokenizer(config.vocab_size, tbuf)
 
     # print the layers number and vocab size
-    print("checkpoint size: ", fbuf.size, "[", fbuf.size // 1024 // 1024, "MB ]", 
-        "| n layers:", config.n_layers, "| vocab size:", tok.vocab_size)
+    print(
+        "checkpoint size: ",
+        fbuf.size,
+        "[",
+        fbuf.size // 1024 // 1024,
+        "MB ]",
+        "| n layers:",
+        config.n_layers,
+        "| vocab size:",
+        tok.vocab_size,
+    )
 
     # Create and initialize the application RunState
     var state = RunState(config)
