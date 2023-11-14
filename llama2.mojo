@@ -462,7 +462,7 @@ fn read_file(file_name: String, inout buf: FileBuf) raises:
     return None
 
 
-fn config_init(inout config: Config, inout buf: FileBuf) raises:
+fn config_init(inout config: Config, inout buf: FileBuf, print_config: Int = 0) raises:
     config.dim = read_val_int(buf)
     config.hidden_dim = read_val_int(buf)
     config.n_layers = read_val_int(buf)
@@ -473,6 +473,13 @@ fn config_init(inout config: Config, inout buf: FileBuf) raises:
     config.head_size = config.dim // config.n_heads
     config.kv_dim = (config.n_kv_heads * config.dim) // config.n_heads
     config.kv_mul = config.n_heads // config.n_kv_heads
+    
+    if print_config:
+        print("config: dim, hidden_dim", config.dim, config.hidden_dim)
+        print("config: n_layers, n_heads", config.n_layers, config.n_heads)
+        print("config: vocab_size, seq_len", config.vocab_size, config.seq_len)
+        print("config: head_size", config.head_size)
+        print("config: kv_dim, kv_mul", config.kv_dim, config.kv_mul)
     return None
 
 
@@ -955,6 +962,7 @@ fn main() raises:
     var steps = 256
     var prompt = String("")
     var rng_seed: Int = time.now()
+    var print_config = 0
 
     @parameter
     fn argparse() raises -> Int:
@@ -975,6 +983,8 @@ fn main() raises:
                 prompt = args[i + 1]
             if args[i] == "-j":
                 workers = atol(args[i + 1])
+            if args[i] == "-pc":
+                print_config = atol(args[i + 1])
             if args[i] == "-t":
                 let val = args[i + 1]
                 temperature = 0.0
@@ -1002,7 +1012,7 @@ fn main() raises:
     var config: Config = Config()
 
     read_file(checkpoint, fbuf)
-    config_init(config, fbuf)
+    config_init(config, fbuf, print_config)
 
     # negative vocab size is hacky way of signaling unshared weights. bit yikes.
     let shared_weights = 1 if config.vocab_size > 0 else 0
