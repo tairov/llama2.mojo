@@ -31,7 +31,7 @@ At the moment, the following models were successfully executed via `llama2.mojo`
 
 **Mac M1 Max (6 threads)**
 
-| Model           | [llama2.c](https://github.com/karpathy/llama2.c) (OMP/parallelized) | **llama2.mojo** (parallelized) | llama.cpp (cpu) | [llama2.py](https://github.com/tairov/llama2.py) |
+| Model           | [llama2.c](https://github.com/karpathy/llama2.c) (OMP/parallelized) | **llama2.mojo** (parallelized) | llama.cpp (CPU, 6 threads) | [llama2.py](https://github.com/tairov/llama2.py) |
 |-----------------|---------------------------------------------------------------------|--------------------------------|-----------------|--------------------------------------------------|
 | stories15M.bin  | 730 tok/s                                                           | 1025 tok/s                     | 890 tok/s       | 38 tok/s (pypi)                                  | 
 | stories42M.bin  | 270 tok/s                                                           | 490 tok/s                      | 420 tok/s       | -                                                | 
