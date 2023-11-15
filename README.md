@@ -1,36 +1,27 @@
 ## llama2.🔥
 
 <p align="center">
-  <img src="assets/llama2.mojo-demo.gif" width="700" alt="llama2.mojo logo">
+  <img src="assets/llama2-m1-cpu.jpeg" width="500" alt="llama2.mojo benchmark">
 </p>
 
 Have you ever wanted to inference a baby Llama 2 model in pure Mojo? No? Well, now you can!
 
-supported version: [Mojo 0.4.0](https://docs.modular.com/mojo/changelog.html#v0.4.0-2023-10-05)
+supported version: [Mojo 0.5.0](https://docs.modular.com/mojo/changelog.html#v0.5.0-2023-11-2)
 
 With the release of [Mojo](https://www.modular.com/blog/mojo-its-finally-here), I was inspired to take my Python port
 of [llama2.py](https://github.com/tairov/llama2.py) and transition it to Mojo. The result? A version that leverages
-Mojo's SIMD & vectorization primitives, boosting the Python performance by nearly 250x. Impressively, the Mojo version
-now outperforms the original `llama2.c` compiled in `runfast` mode out of the box by 15-20%.
+Mojo's SIMD & vectorization primitives, boosting the Python performance by nearly 250x. 
+Impressively, after few native improvements the Mojo version outperforms the original `llama2.c` compiled in `runfast` mode by 30% in Multi-threaded mode. As well as it outperforms `llama.cpp` on baby-llama inference on CPU by 20%.
 This showcases the potential of hardware-level optimizations through Mojo's advanced features.
-I think this also can help us to see how far can we go with the original `llama2.c` hardware optimizations.
-
-## performance
-
-Since there were some debates was this comparison legit or not I did some research and found that in `runfast`
-mode `llama2.c`
-includes multiple optimizations like aggressive vectorization, which makes comparison fair with Mojo SIMD vectorization.
-
-UPD. further improvements of `llama2.mojo` parallelization make it working slightly better or the same as C on different models.
 
 ## supported models
 
 At the moment, the following models were successfully executed via `llama2.mojo`:
 
-| Model                    |
-|--------------------------|
-| stories 260K, 15M, 110M  |
-| Tinyllama-1.1B-Chat-v0.2 |
+| Models                       |
+|------------------------------|
+| stories 260K, 15M, 42M, 110M |
+| Tinyllama-1.1B-Chat-v0.2     |
 
 ### extensive benchmark on Apple M1 Max
 
@@ -38,20 +29,22 @@ At the moment, the following models were successfully executed via `llama2.mojo`
 
 ### benchmark (updated)
 
+**Mac M1 Max (6 threads)**
+
+| Model           | [llama2.c](https://github.com/karpathy/llama2.c) (OMP/parallelized) | **llama2.mojo** (parallelized) | llama.cpp (cpu) | [llama2.py](https://github.com/tairov/llama2.py) |
+|-----------------|---------------------------------------------------------------------|--------------------------------|-----------------|--------------------------------------------------|
+| stories15M.bin  | 730 tok/s                                                           | 1025 tok/s                     | 890 tok/s       | 38 tok/s (pypi)                                  | 
+| stories42M.bin  | 270 tok/s                                                           | 490 tok/s                      | 420 tok/s       | -                                                | 
+| stories110M.bin | 102 tok/s                                                           | 195 tok/s                      | 187 tok/s       | -                                                | 
+| TinyLlama-1.1B  | -                                                                   | 23 tok/s                       | -               | -                                                | 
+
+**Ubuntu 20.04, Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz, 6 cores, 12 threads**
+
 | Model           | [llama2.c](https://github.com/karpathy/llama2.c) (OMP/parallelized) | **llama2.mojo** (parallelized) | llama2.mojo (naive matmul) | [llama2.py](https://github.com/tairov/llama2.py) |
 |-----------------|---------------------------------------------------------------------|--------------------------------|----------------------------|--------------------------------------------------|
 | stories15M.bin  | 435 tok/s                                                           | 440 tok/s                      | 67.26 tok/s                | 1.3 tok/s                                        | 
 | stories110M.bin | 64 tok/s                                                            | 63 tok/s                       | 9.20 tok/s                 | -                                                | 
-| TinyLlama-1.1B  | 7.25 tok/s                                                          | 7.25 tok/s                      | -                          | -                                                | 
-
-#### OS/HW specs
-
-```
-OS:         Ubuntu 20.04
-CPU(s):     6
-Model name: Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz
-CPU MHz:    3191.998
-```
+| TinyLlama-1.1B  | 7.25 tok/s                                                          | 7.25 tok/s                     | -                          | -                                                | 
 
 ## prerequisites
 
@@ -61,6 +54,7 @@ and [configured mojo on your environment](https://docs.modular.com/mojo/manual/g
 Or you can use [mojo playground](https://playground.modular.com/) to run this model.
 
 ## try the 🔥 magic
+
 HuggingFace - https://huggingface.co/spaces/radames/Gradio-llama2.mojo
 
 ## feel the 🔥 magic

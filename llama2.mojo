@@ -6,10 +6,8 @@ from math import round
 from memory import memset_zero, memcpy, stack_allocation
 from memory.buffer import Buffer
 from memory.unsafe import DTypePointer
-from python import Python
 from random import rand
-from read import BufReader, File
-from runtime.llcl import num_cores, Runtime
+from runtime.llcl import num_cores
 from sys import argv
 from tensor import Tensor, TensorShape, TensorSpec
 
@@ -283,11 +281,24 @@ struct Tokenizer:
 
         # read vocab_scores & vocab values (tokens)
         for i in range(0, self.vocab_size):
-            self.vocab_scores.store(i, read_val_float32(buf))
+            let score = read_val_float32(buf)
             let slen = read_val_int(buf)
-            self.vocab.store(i, read_val_str(buf, slen))
-
+            let token = read_val_str(buf, slen)
+            self.store_token(i, token, score)
         return None
+
+    fn __del__(owned self):
+        for i in range(0, self.vocab_size):
+            self.vocab[i].free()
+        self.vocab.free()
+        self.vocab_scores.free()
+        self.sorted_vocab.free()
+
+    fn store_token(
+        inout self, index: Int, owned token: PointerString, score: Float32
+    ) -> None:
+        self.vocab_scores.store(index, score)
+        self.vocab.store(index, token)
 
     # sort vocab by string_compare
     fn sort(inout self) -> None:
@@ -430,21 +441,21 @@ struct TransformerWeights:
 
 
 fn read_file(file_name: String, inout buf: FileBuf) raises:
-    let _os = Python.import_module("os")
-    let ff_size = _os.path.getsize(file_name)
-    let cp_size = string.atol(ff_size.to_string())
-    let cp_buf: BufferPtrType = BufferPtrType.alloc(cp_size)
-    # set window buffer to read binary data from file
-    let f = File(file_name)
-    var reader = BufReader[4096](f ^)
-    var bytes_read = 1
-    var offset = 0
+    var fd = open(file_name, "r")
+    let data = fd.read()
+    fd.close()
 
-    while bytes_read > 0:
-        let buf = Buffer[4096, DType.uint8](cp_buf.offset(offset))
-        bytes_read = reader.read(buf)
-        offset += bytes_read
-    reader.do_nothing()  # keeps lifetimes working
+    let cp_size = data._buffer.size
+    let cp_buf: BufferPtrType = BufferPtrType.alloc(cp_size)
+
+    let data_ptr = data._as_ptr().bitcast[DType.uint8]()
+    
+    for i in range(cp_size):
+        cp_buf.store(i,data_ptr.load(i))
+    
+    # don't free data
+    _ = data
+
     buf.data = cp_buf
     buf.size = cp_size
     buf.offset = 0
@@ -911,12 +922,11 @@ fn sample(probabilities: TensorF32) -> Int:
     let n = probabilities.dim(0)
     # Sample index from probabilities, they must sum to 1
     # get random value within (min, max) float32 range
-    let r = DTypePointer[DType.float32].alloc(1)
-    rand[DType.float32](r, 1)
+    let r = rand[DType.float32](1)
     var cdf: Float32 = 0.0
     for i in range(n):
         cdf += probabilities[i]
-        if r.load(0) < cdf:
+        if r[0] < cdf:
             return i
     return n - 1  # In case of rounding errors
 
@@ -925,7 +935,6 @@ fn bpe_encode(inout tokens: DynamicVector[Int], text: String, inout tok: Tokeniz
     for pos in range(len(text)):
         let char = str_to_ptr(text[pos])
         let id = tok.find(char)
-
         if id == -1:
             print("Not a good prompt token at pos ", pos)
             return
