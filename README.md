@@ -11,7 +11,7 @@ supported version: [Mojo 0.5.0](https://docs.modular.com/mojo/changelog.html#v0.
 With the release of [Mojo](https://www.modular.com/blog/mojo-its-finally-here), I was inspired to take my Python port
 of [llama2.py](https://github.com/tairov/llama2.py) and transition it to Mojo. The result? A version that leverages
 Mojo's SIMD & vectorization primitives, boosting the Python performance by nearly 250x. 
-Impressively, after few native improvements the Mojo version outperforms the original `llama2.c` compiled in `runfast` mode by 30% in Multi-threaded mode. As well as it outperforms `llama.cpp` on baby-llama inference on CPU by 20%.
+Impressively, after few native improvements the Mojo version outperforms the original `llama2.c` by 30% in multi-threaded inference. As well as it outperforms `llama.cpp` on baby-llama inference on CPU by 20%.
 This showcases the potential of hardware-level optimizations through Mojo's advanced features.
 
 ## supported models
