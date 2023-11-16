@@ -449,10 +449,10 @@ fn read_file(file_name: String, inout buf: FileBuf) raises:
     let cp_buf: BufferPtrType = BufferPtrType.alloc(cp_size)
 
     let data_ptr = data._as_ptr().bitcast[DType.uint8]()
-    
+
     for i in range(cp_size):
-        cp_buf.store(i,data_ptr.load(i))
-    
+        cp_buf.store(i, data_ptr.load(i))
+
     # don't free data
     _ = data
 
@@ -570,8 +570,8 @@ fn tile_parallel[tiled_fn: Tile1DFunc, tile: Int](end: Int):
     parallelize[row](end // tile, workers)
 
     # deal with tail elements
-    if end % tile != 0:
-        tiled_fn[tile](end - tile)
+    for i in range(end - end % tile, end, 1):
+        tiled_fn[1](i)
 
 
 @always_inline
@@ -585,6 +585,7 @@ fn batch_matmul[
     cols: Int,
 ):
     alias nelts = simdwidthof[DType.float32]()
+
     alias tile_j = 2**n * nelts
     alias tile_i = 8 // n
 
@@ -601,61 +602,31 @@ fn batch_matmul[
 
         unroll[n, _init]()
 
-        var temp_a = stack_allocation[tile_j, DType.float32]()
-
         @parameter
-        fn calc_cols(jo: Int):
-            @parameter
-            fn copy_a[nelts: Int](j: Int):
-                temp_a.simd_store[nelts](j, A.simd_load[nelts](jo + j))
-
-            vectorize_unroll[nelts, tile_j // nelts, copy_a](tile_j)
-
+        fn calc_cols[tile_j_unroll: Int](jo: Int, tile_j: Int):
             @parameter
             fn calc_row[i: Int]():
                 @parameter
-                fn calc_col[nelts: Int](j: Int):
-                    @parameter
-                    fn _multiply[k: Int]():
-                        accumulator[k].simd_store[nelts](
-                            i * nelts,
-                            accumulator[k].simd_load[nelts](i * nelts)
-                            + temp_a.simd_load[nelts](j)
-                            * B[k].simd_load[nelts]((io + i) * cols + jo + j),
-                        )
-
-                    unroll[n, _multiply]()
-
-                vectorize_unroll[nelts, tile_j // nelts, calc_col](tile_j)
-
-            unroll[tile_i, calc_row]()
-
-        for jo in range(0, cols - cols % tile_j, tile_j):
-            calc_cols(jo)
-
-        # deal with tail elements
-        if cols % tile_j != 0:
-            let temp = cols - cols % tile_j
-
-            @unroll
-            for i in range(tile_i):
-
-                @parameter
-                fn calc_tail_col[_nelts: Int](jo: Int):
-                    let j = temp + jo
-
+                fn calc_col[_nelts: Int](j: Int):
                     @parameter
                     fn _multiply[k: Int]():
                         accumulator[k].simd_store[_nelts](
                             i * nelts,
                             accumulator[k].simd_load[_nelts](i * nelts)
-                            + A.simd_load[_nelts](j)
-                            * B[k].simd_load[_nelts]((io + i) * cols + j),
+                            + A.simd_load[_nelts](jo + j)
+                            * B[k].simd_load[_nelts]((io + i) * cols + jo + j),
                         )
 
                     unroll[n, _multiply]()
 
-                vectorize[nelts, calc_tail_col](cols % tile_j)
+                vectorize_unroll[nelts, tile_j_unroll, calc_col](tile_j)
+
+            unroll[tile_i, calc_row]()
+
+        for jo in range(0, cols - cols % tile_j, tile_j):
+            calc_cols[tile_j // nelts](jo, tile_j)
+
+        calc_cols[1](cols - cols % tile_j, cols % tile_j)
 
         @parameter
         fn copy_values[i: Int]():
