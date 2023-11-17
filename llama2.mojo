@@ -569,9 +569,8 @@ fn tile_parallel[tiled_fn: Tile1DFunc, tile: Int](end: Int):
 
     parallelize[row](end // tile, workers)
 
-    # deal with tail elements
-    for i in range(end - end % tile, end, 1):
-        tiled_fn[1](i)
+    if end % tile != 0:
+        tiled_fn[tile](end - tile)
 
 
 @always_inline
@@ -605,23 +604,26 @@ fn batch_matmul[
         @parameter
         fn calc_cols[tile_j_unroll: Int](jo: Int, tile_j: Int):
             @parameter
-            fn calc_row[i: Int]():
+            fn _batch[k: Int]():
                 @parameter
-                fn calc_col[_nelts: Int](j: Int):
+                fn calc_row[i: Int]():
+                    let row_offset_c = i * nelts
+                    let row_offset_b = (io + i) * cols
+
                     @parameter
-                    fn _multiply[k: Int]():
+                    fn calc_col[_nelts: Int](j: Int):
                         accumulator[k].simd_store[_nelts](
-                            i * nelts,
-                            accumulator[k].simd_load[_nelts](i * nelts)
+                            row_offset_c,
+                            accumulator[k].simd_load[_nelts](row_offset_c)
                             + A.simd_load[_nelts](jo + j)
-                            * B[k].simd_load[_nelts]((io + i) * cols + jo + j),
+                            * B[k].simd_load[_nelts](row_offset_b + jo + j),
                         )
 
-                    unroll[n, _multiply]()
+                    vectorize_unroll[nelts, tile_j_unroll, calc_col](tile_j)
 
-                vectorize_unroll[nelts, tile_j_unroll, calc_col](tile_j)
+                unroll[tile_i, calc_row]()
 
-            unroll[tile_i, calc_row]()
+            unroll[n, _batch]()
 
         for jo in range(0, cols - cols % tile_j, tile_j):
             calc_cols[tile_j // nelts](jo, tile_j)
@@ -629,16 +631,16 @@ fn batch_matmul[
         calc_cols[1](cols - cols % tile_j, cols % tile_j)
 
         @parameter
-        fn copy_values[i: Int]():
+        fn _copy_values[k: Int]():
             @parameter
-            fn _reduce[k: Int]():
+            fn _reduce[i: Int]():
                 C[k].store(
                     io + i, accumulator[k].simd_load[nelts](i * nelts).reduce_add()
                 )
 
-            unroll[n, _reduce]()
+            unroll[tile_i, _reduce]()
 
-        unroll[tile_i, copy_values]()
+        unroll[n, _copy_values]()
 
     tile_parallel[calc_tiles_row, tile_i](rows)
 
