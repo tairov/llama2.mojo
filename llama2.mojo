@@ -1,7 +1,7 @@
 from algorithm import sum
 from algorithm import vectorize, parallelize, unroll, tile
 from builtin import string
-from math import round
+from math import round, log2
 from memory import memset_zero, memcpy, stack_allocation
 from memory.buffer import Buffer
 from memory.unsafe import DTypePointer
@@ -570,8 +570,21 @@ fn batch_matmul[
     rows: Int,
     cols: Int,
 ):
-    alias nelts_list = VariadicList(32, 16, 8, 4, 2, 1)
-    alias stack_size = 32
+    alias nelts_list_size = log2[DType.float64, 1](nelts).to_int() + 1
+
+    @parameter
+    fn create_nelts_list() -> StaticTuple[nelts_list_size, Int]:
+        var nelts_list = StaticTuple[nelts_list_size, Int]()
+
+        @parameter
+        fn create_nelts_list_helper[i: Int]():
+            nelts_list[i] = nelts >> i
+
+        unroll[nelts_list_size, create_nelts_list_helper]()
+
+        return nelts_list
+
+    alias nelts_list = create_nelts_list()  # we want the list to only contain nelts value that are 4 * simdwidth or less, if we use bigger values we get undefined behavior
 
     @parameter
     fn compute_row(i: Int):
@@ -579,29 +592,32 @@ fn batch_matmul[
 
         @parameter
         fn init[k: Int]():
-            tmp[k] = stack_allocation[stack_size, DType.float32]()
-            memset_zero(tmp[k], stack_size)
+            tmp[k] = stack_allocation[nelts_list[0], DType.float32]()
+            memset_zero(tmp[k], nelts_list[0])
 
         unroll[n, init]()
         let row_offset = i * cols
 
+        var j = 0
+
         @parameter
-        fn dot[_nelts: Int](j: Int):
-            # take care of tail array elements with length <  nelts
-            let a = A.simd_load[_nelts](j)
+        fn dot[z: Int]():
+            let range = cols - cols % nelts_list[z]
+            while j < range:
+                let a = A.simd_load[nelts_list[z]](j)
 
-            @parameter
-            fn _multiply_tail[k: Int]():
-                tmp[k].simd_store[_nelts](
-                    0,
-                    tmp[k].simd_load[_nelts](0)
-                    + a * B[k].simd_load[_nelts](row_offset + j),
-                )
+                @parameter
+                fn _multiply_tail[k: Int]():
+                    tmp[k].simd_store[nelts_list[z]](
+                        0,
+                        tmp[k].simd_load[nelts_list[z]](0)
+                        + a * B[k].simd_load[nelts_list[z]](row_offset + j),
+                    )
 
-            unroll[n, _multiply_tail]()
+                unroll[n, _multiply_tail]()
+                j += nelts_list[z]
 
-        # vectorize[nelts, dot](cols)
-        tile[dot, nelts_list](0, cols)
+        unroll[nelts_list_size, dot]()
 
         @parameter
         fn _reduce[k: Int]():
