@@ -17,6 +17,7 @@ import os
 import random
 import time
 
+let NUM_CONFIG_INT = 7
 var workers = 0
 
 alias nelts = (4*simdwidthof[DType.float32]())
@@ -368,18 +369,35 @@ struct Config:
     var vocab_size: Int
     var seq_len: Int
     var head_size: Int
+    var shared_weights: Bool
 
-    fn __init__(inout self):
-        self.dim = 0
-        self.hidden_dim = 0
-        self.n_layers = 0
-        self.n_heads = 0
-        self.n_kv_heads = 0
-        self.vocab_size = 0
-        self.seq_len = 0
-        self.kv_dim = 0
-        self.kv_mul = 0
-        self.head_size = 0
+    fn __init__(inout self, fileName: String, print_config: Bool) raises:
+        var f = open(fileName, "r")
+        # reading 7 vars of type DType.int32 from the file
+        let number_of_config_params = NUM_CONFIG_INT * sizeof[DType.int32]()
+        let config_data = f.read_bytes(number_of_config_params).astype[DType.int32]()
+        f.close()
+        self.dim = config_data[0].to_int()
+        self.hidden_dim = config_data[1].to_int()
+        self.n_layers = config_data[2].to_int()
+        self.n_heads = config_data[3].to_int()
+        self.n_kv_heads = config_data[4].to_int()
+        self.vocab_size = config_data[5].to_int()
+        self.seq_len = config_data[6].to_int()
+        self.head_size = self.dim // self.n_heads
+        self.kv_dim = (self.n_kv_heads * self.dim) // self.n_heads
+        self.kv_mul = self.n_heads // self.n_kv_heads
+        # negative vocab size is hacky way of signaling unshared weights. bit yikes.
+        self.shared_weights = self.vocab_size > 0
+        if not self.shared_weights:
+            self.vocab_size = -self.vocab_size
+
+        if print_config:
+            print("config: dim, hidden_dim", self.dim, self.hidden_dim)
+            print("config: n_layers, n_heads", self.n_layers, self.n_heads)
+            print("config: vocab_size, seq_len", self.vocab_size, self.seq_len)
+            print("config: head_size", self.head_size)
+            print("config: kv_dim, kv_mul", self.kv_dim, self.kv_mul)
 
 
 struct RunState:
@@ -430,39 +448,51 @@ struct TransformerWeights:
     var rms_final_weight: TensorF32
     var wcls: TensorF32
 
-    fn __init__(
-        inout self, config: Config, shared_weights: Int, inout buf: FileBuf
-    ) raises:
-        fn load_weights(inout buf: FileBuf, *dims: Int) raises -> TensorF32:
-            # Ensure returned Tensor doesn't share a pointer with FileBuf
-            let shape = TensorShape(dims)
-            let result_data = BufferPtrFloat32.alloc(shape.num_elements())
-            memcpy(
-                result_data,
-                buf.bitcast_offset_f32(shape.num_elements()),
-                shape.num_elements(),
-            )
-            return TensorF32(result_data, shape)
+    fn __init__(inout self, file_name: String, config: Config) raises:
+        var bytes_read = 0
+        var f = open(file_name, "r")
 
-        self.token_embedding_table = load_weights(buf, config.vocab_size, config.dim)
-        self.rms_att_weight = load_weights(buf, config.n_layers, config.dim)
-        self.wq = load_weights(buf, config.n_layers, config.dim, config.dim)
-        self.wk = load_weights(buf, config.n_layers, config.kv_dim, config.dim)
-        self.wv = load_weights(buf, config.n_layers, config.kv_dim, config.dim)
-        self.wo = load_weights(buf, config.n_layers, config.dim, config.dim)
-        self.rms_ffn_weight = load_weights(buf, config.n_layers, config.dim)
-        self.w1 = load_weights(buf, config.n_layers, config.hidden_dim, config.dim)
-        self.w2 = load_weights(buf, config.n_layers, config.dim, config.hidden_dim)
-        self.w3 = load_weights(buf, config.n_layers, config.hidden_dim, config.dim)
-        self.rms_final_weight = load_weights(buf, config.dim)
+        # throw away config data
+        _ = f.read_bytes(NUM_CONFIG_INT * sizeof[DType.int32]())
+        bytes_read += NUM_CONFIG_INT * sizeof[DType.int32]()
+
+        @parameter
+        fn read_weights(*dims: Int) raises -> TensorF32:
+            let shape = TensorShape(dims)
+            # The created tensor takes a 1D shape equal to bytes read
+            # So we can't reshape to target shape because dims don't match
+            var tmp = f.read_bytes(shape.num_elements() * sizeof[DType.float32]())
+            bytes_read += shape.num_elements() * sizeof[DType.float32]()
+            let data = tmp._steal_ptr().bitcast[DType.float32]()
+            return TensorF32(data, shape)
+
+        self.token_embedding_table = read_weights(config.vocab_size, config.dim)
+        self.rms_att_weight = read_weights(config.n_layers, config.dim)
+        self.wq = read_weights(config.n_layers, config.dim, config.dim)
+        self.wk = read_weights(config.n_layers, config.kv_dim, config.dim)
+        self.wv = read_weights(config.n_layers, config.kv_dim, config.dim)
+        self.wo = read_weights(config.n_layers, config.dim, config.dim)
+        self.rms_ffn_weight = read_weights(config.n_layers, config.dim)
+        self.w1 = read_weights(config.n_layers, config.hidden_dim, config.dim)
+        self.w2 = read_weights(config.n_layers, config.dim, config.hidden_dim)
+        self.w3 = read_weights(config.n_layers, config.hidden_dim, config.dim)
+        self.rms_final_weight = read_weights(config.dim)
         # maybe need modifying for different model
         # config.head_size // 2 for stories and tinyllama-1.1
-        self.freq_cis_real = load_weights(buf, config.seq_len, config.head_size // 2)
-        self.freq_cis_imag = load_weights(buf, config.seq_len, config.head_size // 2)
-        if shared_weights:
+        self.freq_cis_real = read_weights(config.seq_len, config.head_size // 2)
+        self.freq_cis_imag = read_weights(config.seq_len, config.head_size // 2)
+        if config.shared_weights:
             self.wcls = self.token_embedding_table
         else:
-            self.wcls = load_weights(buf, config.vocab_size, config.dim)
+            self.wcls = read_weights(config.vocab_size, config.dim)
+        f.close()
+        print(
+            "Total bytes read:",
+            bytes_read,
+            "Estimated checkpoint size: ",
+            bytes_read // 1024 // 1024,
+            "MB",
+        )
 
 
 fn read_file(file_name: String, inout buf: FileBuf) raises:
@@ -473,28 +503,6 @@ fn read_file(file_name: String, inout buf: FileBuf) raises:
     buf.data = data._steal_ptr().bitcast[DType.uint8]()
     buf.offset = 0
     return None
-
-
-fn config_init(inout config: Config, inout buf: FileBuf, print_config: Int = 0) raises:
-    config.dim = read_val_int(buf)
-    config.hidden_dim = read_val_int(buf)
-    config.n_layers = read_val_int(buf)
-    config.n_heads = read_val_int(buf)
-    config.n_kv_heads = read_val_int(buf)
-    config.vocab_size = read_val_int(buf)
-    config.seq_len = read_val_int(buf)
-    config.head_size = config.dim // config.n_heads
-    config.kv_dim = (config.n_kv_heads * config.dim) // config.n_heads
-    config.kv_mul = config.n_heads // config.n_kv_heads
-    
-    if print_config:
-        print("config: dim, hidden_dim", config.dim, config.hidden_dim)
-        print("config: n_layers, n_heads", config.n_layers, config.n_heads)
-        print("config: vocab_size, seq_len", config.vocab_size, config.seq_len)
-        print("config: head_size", config.head_size)
-        print("config: kv_dim, kv_mul", config.kv_dim, config.kv_mul)
-    return None
-
 
 @always_inline
 fn accum(inout a: TensorF32, b: TensorF32) -> None:
@@ -1002,31 +1010,23 @@ fn main() raises:
 
     print("num parallel workers:", workers, " SIMD width:", nelts)
     random.seed(rng_seed)
-    var fbuf: FileBuf = FileBuf()
-    var tbuf: FileBuf = FileBuf()
-    var config: Config = Config()
-
-    read_file(checkpoint, fbuf)
-    config_init(config, fbuf, print_config)
-
-    # negative vocab size is hacky way of signaling unshared weights. bit yikes.
-    let shared_weights = 1 if config.vocab_size > 0 else 0
-    config.vocab_size = (
-        -config.vocab_size if config.vocab_size < 0 else config.vocab_size
-    )
-
-    let weights: TransformerWeights = TransformerWeights(config, shared_weights, fbuf)
+    let config = Config(checkpoint, print_config == 1)
+    let weights = TransformerWeights(checkpoint, config)
 
     if steps <= 0 or steps > config.seq_len:
         steps = config.seq_len
 
     # Read in the tokenizer.bin file
+    var tbuf = FileBuf()
     read_file(tokenizer, tbuf)
     var tok = Tokenizer(config.vocab_size, tbuf)
 
-    # print the layers number and vocab size
-    print("checkpoint size: ", fbuf.size, "[", fbuf.size // 1024 // 1024, "MB ]", 
-        "| n layers:", config.n_layers, "| vocab size:", tok.vocab_size)
+    print(
+        "n layers:",
+        config.n_layers,
+        "| vocab size:",
+        tok.vocab_size,
+    )
 
     # Create and initialize the application RunState
     var state = RunState(config)
