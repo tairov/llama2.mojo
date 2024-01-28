@@ -6,7 +6,7 @@ from memory import memset_zero, memcpy, stack_allocation
 from memory.buffer import Buffer
 from memory.unsafe import DTypePointer
 from random import rand
-from runtime.llcl import num_cores
+from sys.info import num_performance_cores
 from sys import argv
 from tensor import Tensor, TensorShape, TensorSpec
 
@@ -17,10 +17,10 @@ import os
 import random
 import time
 
-let NUM_CONFIG_INT = 7
+alias NUM_CONFIG_INT = 7
 var workers = 0
 
-alias nelts = (4*simdwidthof[DType.float32]())
+alias nelts = (4 * simdwidthof[DType.float32]())
 
 alias PointerString = Pointer[UInt8]
 alias BufferPtrType = DTypePointer[DType.uint8]
@@ -418,7 +418,6 @@ struct RunState:
     var key_cache: TensorF32  # (layer, seq_len, dim)
     var value_cache: TensorF32  # (layer, seq_len, dim)
 
-
     fn __init__(inout self, config: Config) raises:
         self.x = TensorF32(config.dim)
         self.xb = TensorF32(config.dim)
@@ -508,6 +507,7 @@ fn read_file(file_name: String, inout buf: FileBuf) raises:
     buf.offset = 0
     return None
 
+
 @always_inline
 fn accum(inout a: TensorF32, b: TensorF32) -> None:
     let size = a.dim(0)
@@ -583,6 +583,7 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
     vectorize[nelts, _exp](end - start)
 
     var ssum = acc.total()
+
     @parameter
     fn _norm[_nelts: Int](ii: Int):
         x.simd_store[_nelts](start + ii, x.simd_load[_nelts](start + ii) / ssum)
@@ -603,6 +604,7 @@ fn batch_matmul[
     @parameter
     fn compute_row(i: Int):
         var tmp = StaticTuple[n, Accumulator[DType.float32, nelts]]()
+
         @unroll
         for k in range(n):
             tmp[k] = Accumulator[DType.float32, nelts]()
@@ -657,7 +659,9 @@ fn matmul(C: TensorSlice, A: TensorF32, B: TensorSlice) raises:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_dimension_checks(A.shape(), B.shape())
     batch_matmul[1](
-        StaticTuple[1, BufferPtrFloat32](C.data(),),
+        StaticTuple[1, BufferPtrFloat32](
+            C.data(),
+        ),
         A.data(),
         StaticTuple[1, BufferPtrFloat32](B.data()),
         B.dim(0),
@@ -685,8 +689,9 @@ fn rope_rotation_llama(
 ) -> None:
     # stories model, llama2
     let head_size = config.head_size
+
     @parameter
-    fn head_loop(i:Int):
+    fn head_loop(i: Int):
         # Simple vectorization with (head_size // 2) steps gave junk transformer output.
         # Maybe because the nelt ranges end up overlapping between the steps.
         for j in range(0, config.head_size, 2):
@@ -701,8 +706,8 @@ fn rope_rotation_llama(
                 let k1 = state.k[i * head_size + j + 1]
                 state.k[i * head_size + j] = k0 * fcr - k1 * fci
                 state.k[i * head_size + j + 1] = k0 * fci + k1 * fcr
-    parallelize[head_loop](config.n_heads, workers)
 
+    parallelize[head_loop](config.n_heads, workers)
 
 
 @always_inline
@@ -769,7 +774,7 @@ fn transformer(
 
         # Multihead attention. Iterate over all heads in parallel.
         @parameter
-        fn loop_over_heads(h:Int):
+        fn loop_over_heads(h: Int):
             # Get the query vector for this head
             let q_offset = h * head_size
 
@@ -962,7 +967,7 @@ fn print_usage():
 
 
 fn main() raises:
-    workers = num_cores()
+    workers = num_performance_cores()
     var tokenizer = StringRef("tokenizer.bin")
     var checkpoint = StringRef("stories15M.bin")
     var temperature = 0.9
