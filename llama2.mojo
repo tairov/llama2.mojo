@@ -38,7 +38,7 @@ struct Accumulator[T: DType, width: Int]:
     @always_inline
     fn __init__() -> Self:
         # allocate a DTypePointer on stack that doesn't need to be freed.
-        let data = stack_allocation[width, T]()
+        var data = stack_allocation[width, T]()
         memset_zero(data, width)
         return Self {data: data}
 
@@ -46,7 +46,7 @@ struct Accumulator[T: DType, width: Int]:
     fn accumulate[_width: Int](inout self, val: SIMD[T, _width]) -> None:
         # This is a hack to make sure both SIMD have _width length.
         # SIMD[T, width] += SIMD[T, _width] is always an error.
-        let newVal = self.data.simd_load[_width]() + val
+        var newVal = self.data.simd_load[_width]() + val
         self.data.simd_store[_width](newVal)
 
     @always_inline
@@ -61,7 +61,7 @@ struct TensorSlice:
     var _shape: TensorShape
 
     fn __init__(inout self, t: TensorF32, layer: Int) raises:
-        let elements_per_layer = t.num_elements() // t.dim(0)
+        var elements_per_layer = t.num_elements() // t.dim(0)
         self._data = t.data().offset(layer * elements_per_layer)
         if t.rank() == 2:
             self._shape = TensorShape(t.dim(1))
@@ -73,8 +73,8 @@ struct TensorSlice:
             raise Error("TensorSlice: rank greater than 3 not implemented.")
 
     fn __init__(inout self, t: TensorF32, layer: Int, row: Int) raises:
-        let elements_per_layer = t.num_elements() // t.dim(0)
-        let elements_per_row = elements_per_layer // t.dim(1)
+        var elements_per_layer = t.num_elements() // t.dim(0)
+        var elements_per_row = elements_per_layer // t.dim(1)
         self._data = t.data().offset(
             layer * elements_per_layer + row * elements_per_row
         )
@@ -135,21 +135,21 @@ struct TensorSlice:
 
 fn read_val_int(inout buf: FileBuf) raises -> Int:
     # DTypePointer[DType.ui8](buf.data).bitcast[DType.ui8]()
-    let data = buf.data.offset(buf.get_offset()).bitcast[DType.int32]()
-    let result = data.load(0)
+    var data = buf.data.offset(buf.get_offset()).bitcast[DType.int32]()
+    var result = data.load(0)
     buf.move_offset(4)
     return result.to_int()
 
 
 fn read_val_float32(inout buf: FileBuf) raises -> Float32:
     # DTypePointer[DType.ui8](buf.data).bitcast[DType.ui8]()
-    let val = buf.data.offset(buf.get_offset()).bitcast[DType.float32]().load(0)
+    var val = buf.data.offset(buf.get_offset()).bitcast[DType.float32]().load(0)
     buf.move_offset(4)
     return val
 
 
 fn read_val_str(inout buf: FileBuf, slen: Int) raises -> PointerString:
-    let str = PointerString.alloc(slen + 1)
+    var str = PointerString.alloc(slen + 1)
     for i in range(slen):
         str.store(i, buf.data.load(buf.get_offset()))
         buf.move_offset(1)
@@ -167,9 +167,9 @@ fn str_len(s: PointerString) -> Int:
 
 # not optimal concat
 fn str_concat(s1: PointerString, s2: PointerString) -> PointerString:
-    let l1 = str_len(s1)
-    let l2 = str_len(s2)
-    let str = PointerString.alloc(l1 + l2 + 1)
+    var l1 = str_len(s1)
+    var l2 = str_len(s2)
+    var str = PointerString.alloc(l1 + l2 + 1)
     memcpy[UInt8](str, s1, l1)
     memcpy[UInt8](str.offset(l1), s2, l2)
     str.store(l1 + l2, 0)
@@ -177,7 +177,7 @@ fn str_concat(s1: PointerString, s2: PointerString) -> PointerString:
 
 
 fn str_to_ptr(s: String) -> PointerString:
-    let ret = PointerString.alloc(len(s) + 1)
+    var ret = PointerString.alloc(len(s) + 1)
     for i in range(len(s)):
         ret.store(i, ord(s[i]))
     ret.store(len(s), 0)
@@ -207,23 +207,23 @@ fn string_compare(a: PointerString, b: PointerString) -> Int:
 fn partition(
     inout array: PointerStrings, inout indices: DynamicVector[Int], low: Int, high: Int
 ) -> Int:
-    let pivot = array[high]
+    var pivot = array[high]
     var ii = low - 1
     for jj in range(low, high):
         if string_compare(pivot, array[jj]) == 1:
             # If element smaller than pivot, swap
             ii = ii + 1
 
-            let tmp = array[ii]
-            let tmp_idx = indices[ii]
+            var tmp = array[ii]
+            var tmp_idx = indices[ii]
             array.store(ii, array[jj])
             indices[ii] = indices[jj]
             array.store(jj, tmp)
             indices[jj] = tmp_idx
 
     # Swap the pivot element
-    let tmp = array[ii + 1]
-    let tmp_idx = indices[ii + 1]
+    var tmp = array[ii + 1]
+    var tmp_idx = indices[ii + 1]
     array.store(ii + 1, array[high])
     indices[ii + 1] = indices[high]
     array.store(high, tmp)
@@ -236,7 +236,7 @@ fn quicksort(
     inout array: PointerStrings, inout indices: DynamicVector[Int], low: Int, high: Int
 ):
     if low < high:
-        let pi = partition(array, indices, low, high)
+        var pi = partition(array, indices, low, high)
         quicksort(array, indices, low, pi - 1)
         quicksort(array, indices, pi + 1, high)
 
@@ -255,7 +255,7 @@ struct FileBuf:
         self.data.free()
 
     fn move_offset(inout self, size: Int) raises:
-        let new_offset = self.offset + size
+        var new_offset = self.offset + size
         if new_offset > self.size:
             raise Error("Resulting offset will be past the end of the FileBuf")
         if new_offset < 0:
@@ -263,7 +263,7 @@ struct FileBuf:
         self.offset = new_offset
 
     fn bitcast_offset_f32(inout self, size: Int) raises -> BufferPtrFloat32:
-        let ret = self.data.offset(self.offset).bitcast[DType.float32]()
+        var ret = self.data.offset(self.offset).bitcast[DType.float32]()
         self.move_offset(size * sizeof[DType.float32]())
         return ret
 
@@ -302,13 +302,13 @@ struct Tokenizer:
         self.vocab = PointerStrings.alloc(self.vocab_size)
         # lazy load sorted vocab
         self.sorted_vocab = PointerStrings.alloc(0)
-        self.sorted_indices = DynamicVector[Int](0)
+        self.sorted_indices = DynamicVector[Int]()
 
         # read vocab_scores & vocab values (tokens)
         for i in range(0, self.vocab_size):
-            let score = read_val_float32(buf)
-            let slen = read_val_int(buf)
-            let token = read_val_str(buf, slen)
+            var score = read_val_float32(buf)
+            var slen = read_val_int(buf)
+            var token = read_val_str(buf, slen)
             self.store_token(i, token, score)
         return None
 
@@ -328,27 +328,27 @@ struct Tokenizer:
     # sort vocab by string_compare
     fn sort(inout self) -> None:
         if len(self.sorted_indices) < self.vocab_size:
-            self.sorted_indices = DynamicVector[Int](self.vocab_size)
+            self.sorted_indices = DynamicVector[Int](capacity=self.vocab_size)
             self.sorted_vocab = PointerStrings.alloc(self.vocab_size)
             for ii in range(self.vocab_size):
                 self.sorted_vocab.store(ii, self.vocab[ii])
                 self.sorted_indices.push_back(ii)
 
-        let n = self.vocab_size
+        var n = self.vocab_size
         quicksort(self.sorted_vocab, self.sorted_indices, 0, n - 1)
         return None
 
     # Binary search that returns -1 if string is not found
     fn find(inout self, token_o: PointerString) -> Int:
-        let token = wrap(token_o)
-        let n = self.vocab_size
+        var token = wrap(token_o)
+        var n = self.vocab_size
         if len(self.sorted_indices) < n:
             self.sort()
         var left = 0
         var right = n - 1
         while left <= right:
-            let mid = left + (right - left) // 2
-            let comparison = string_compare(self.sorted_vocab[mid], token)
+            var mid = left + (right - left) // 2
+            var comparison = string_compare(self.sorted_vocab[mid], token)
             if comparison == 0:
                 return self.sorted_indices[mid]
             if comparison < 0:
@@ -374,13 +374,13 @@ struct Config:
     fn __init__(inout self, fileName: String, print_config: Bool) raises:
         var f = open(fileName, "r")
         # reading 7 vars of type DType.int32 from the file
-        let bytes_of_config_params = NUM_CONFIG_INT * sizeof[DType.int32]()
+        var bytes_of_config_params = NUM_CONFIG_INT * sizeof[DType.int32]()
         # config_data_raw id Tensor[DType.int8] with bytes_of_config_params elements
         var config_data_raw = f.read_bytes(bytes_of_config_params)
         f.close()
         # correct Tensor type and shape for easy reading, without copying data
-        let int32_ptr = config_data_raw._steal_ptr().bitcast[DType.int32]()
-        let config_data = Tensor[DType.int32](int32_ptr, NUM_CONFIG_INT)
+        var int32_ptr = config_data_raw._steal_ptr().bitcast[DType.int32]()
+        var config_data = Tensor[DType.int32](int32_ptr, NUM_CONFIG_INT)
         self.dim = config_data[0].to_int()
         self.hidden_dim = config_data[1].to_int()
         self.n_layers = config_data[2].to_int()
@@ -461,12 +461,12 @@ struct TransformerWeights:
 
         @parameter
         fn read_weights(*dims: Int) raises -> TensorF32:
-            let shape = TensorShape(dims)
+            var shape = TensorShape(dims)
             # The created tensor takes a 1D shape equal to bytes read
             # So we can't reshape to target shape because dims don't match
             var tmp = f.read_bytes(shape.num_elements() * sizeof[DType.float32]())
             bytes_read += shape.num_elements() * sizeof[DType.float32]()
-            let data = tmp._steal_ptr().bitcast[DType.float32]()
+            var data = tmp._steal_ptr().bitcast[DType.float32]()
             return TensorF32(data, shape)
 
         self.token_embedding_table = read_weights(config.vocab_size, config.dim)
@@ -510,13 +510,13 @@ fn read_file(file_name: String, inout buf: FileBuf) raises:
 
 @always_inline
 fn accum(inout a: TensorF32, b: TensorF32) -> None:
-    let size = a.dim(0)
+    var size = a.dim(0)
 
     @parameter
     fn _acc[_nelts: Int](j: Int):
         a.simd_store[_nelts](j, a.simd_load[_nelts](j) + b.simd_load[_nelts](j))
 
-    vectorize[nelts, _acc](size)
+    vectorize[_acc, nelts](size)
 
 
 @always_inline
@@ -530,7 +530,7 @@ fn rmsnorm(
     fn _sum2[_nelts: Int](j: Int):
         tmp.accumulate(x.offset(j).simd_load[_nelts](0) ** 2)
 
-    vectorize[nelts, _sum2](size)
+    vectorize[_sum2, nelts](size)
 
     var ss: Float32 = tmp.total()
     ss = ss / size + 1e-5
@@ -539,10 +539,10 @@ fn rmsnorm(
     # Normalize and scale
     @parameter
     fn _norm[_nelts: Int](j: Int):
-        let val = weight.simd_load[_nelts](j) * ss * x.simd_load[_nelts](j)
+        var val = weight.simd_load[_nelts](j) * ss * x.simd_load[_nelts](j)
         o.offset(j).simd_store[_nelts](0, val)
 
-    vectorize[nelts, _norm](size)
+    vectorize[_norm, nelts](size)
 
 
 @always_inline
@@ -566,21 +566,21 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
 
     @parameter
     fn _max[_nelts: Int](ii: Int):
-        let val = x.simd_load[_nelts](start + ii).reduce_max()
+        var val = x.simd_load[_nelts](start + ii).reduce_max()
         if val > max_val:
             max_val = val
 
-    vectorize[nelts, _max](end - start)
+    vectorize[_max, nelts](end - start)
 
     var acc = Accumulator[DType.float32, nelts]()
 
     @parameter
     fn _exp[_nelts: Int](ii: Int):
-        let val = math.exp(x.simd_load[_nelts](start + ii) - max_val)
+        var val = math.exp(x.simd_load[_nelts](start + ii) - max_val)
         x.simd_store[_nelts](start + ii, val)
         acc.accumulate(val)
 
-    vectorize[nelts, _exp](end - start)
+    vectorize[_exp, nelts](end - start)
 
     var ssum = acc.total()
 
@@ -588,7 +588,7 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
     fn _norm[_nelts: Int](ii: Int):
         x.simd_store[_nelts](start + ii, x.simd_load[_nelts](start + ii) / ssum)
 
-    vectorize[nelts, _norm](end - start)
+    vectorize[_norm, nelts](end - start)
 
 
 @always_inline
@@ -609,17 +609,17 @@ fn batch_matmul[
         for k in range(n):
             tmp[k] = Accumulator[DType.float32, nelts]()
 
-        let row_offset = i * cols
+        var row_offset = i * cols
 
         @parameter
         fn dot[_nelts: Int](j: Int):
-            let a = A.simd_load[_nelts](j)
+            var a = A.simd_load[_nelts](j)
 
             @unroll
             for k in range(n):
                 tmp[k].accumulate(a * B[k].simd_load[_nelts](row_offset + j))
 
-        vectorize[nelts, dot](cols)
+        vectorize[dot, nelts](cols)
 
         @unroll
         for k in range(n):
@@ -688,22 +688,22 @@ fn rope_rotation_llama(
     config: Config,
 ) -> None:
     # stories model, llama2
-    let head_size = config.head_size
+    var head_size = config.head_size
 
     @parameter
     fn head_loop(i: Int):
         # Simple vectorization with (head_size // 2) steps gave junk transformer output.
         # Maybe because the nelt ranges end up overlapping between the steps.
         for j in range(0, config.head_size, 2):
-            let fcr = freq_cis_real_row[j // 2]
-            let fci = freq_cis_imag_row[j // 2]
-            let q0 = state.q[i * head_size + j]
-            let q1 = state.q[i * head_size + j + 1]
+            var fcr = freq_cis_real_row[j // 2]
+            var fci = freq_cis_imag_row[j // 2]
+            var q0 = state.q[i * head_size + j]
+            var q1 = state.q[i * head_size + j + 1]
             state.q[i * head_size + j] = q0 * fcr - q1 * fci
             state.q[i * head_size + j + 1] = q0 * fci + q1 * fcr
             if i < config.n_kv_heads:
-                let k0 = state.k[i * head_size + j]
-                let k1 = state.k[i * head_size + j + 1]
+                var k0 = state.k[i * head_size + j]
+                var k1 = state.k[i * head_size + j + 1]
                 state.k[i * head_size + j] = k0 * fcr - k1 * fci
                 state.k[i * head_size + j + 1] = k0 * fci + k1 * fcr
 
@@ -719,26 +719,26 @@ fn transformer(
     weights: TransformerWeights,
 ) raises -> None:
     # A few convenience variables
-    let dim = config.dim
-    let hidden_dim = config.hidden_dim
-    let head_size = config.head_size
-    let kv_dim = config.kv_dim
-    let kv_mul = config.kv_mul
+    var dim = config.dim
+    var hidden_dim = config.hidden_dim
+    var head_size = config.head_size
+    var kv_dim = config.kv_dim
+    var kv_mul = config.kv_mul
 
     # Copy the token embedding into x
-    let content_row = weights.token_embedding_table.data().offset(token * dim)
+    var content_row = weights.token_embedding_table.data().offset(token * dim)
     memcpy[DType.float32](state.x.data(), content_row, dim)
 
     # Pluck out the "pos" row of freq_cis_real and freq_cis_imag
-    let freq_cis_real_row = TensorSlice(weights.freq_cis_real, pos)
-    let freq_cis_imag_row = TensorSlice(weights.freq_cis_imag, pos)
+    var freq_cis_real_row = TensorSlice(weights.freq_cis_real, pos)
+    var freq_cis_imag_row = TensorSlice(weights.freq_cis_imag, pos)
 
     # Forward all the layers
     for l in range(config.n_layers):
         # Attention rmsnorm
         rmsnorm(state.xb, state.x, TensorSlice(weights.rms_att_weight, l))
         # QKV matmuls for this position
-        let loff = l * config.seq_len * config.kv_dim
+        var loff = l * config.seq_len * config.kv_dim
         state.k = TensorSlice(state.key_cache, l, pos)
         state.v = TensorSlice(state.value_cache, l, pos)
         if kv_dim == dim:
@@ -776,15 +776,15 @@ fn transformer(
         @parameter
         fn loop_over_heads(h: Int):
             # Get the query vector for this head
-            let q_offset = h * head_size
+            var q_offset = h * head_size
 
             # Index of attention scores for this head
-            let att_offset = h * config.seq_len
+            var att_offset = h * config.seq_len
 
             # Iterate over all timesteps, including the current one
             for t in range(pos + 1):
                 # Starting index of the key vector for this head and at this timestep
-                let k_offset = loff + t * kv_dim + (h // kv_mul) * head_size
+                var k_offset = loff + t * kv_dim + (h // kv_mul) * head_size
                 # Calculate the attention score as the dot product of q and k
                 var score: Float32 = 0.0
 
@@ -795,7 +795,7 @@ fn transformer(
                         * state.key_cache.simd_load[_nelts](k_offset + i)
                     ).reduce_add()
 
-                vectorize[nelts, score_fn](head_size)
+                vectorize[score_fn, nelts](head_size)
                 score /= math.sqrt[DType.float32, 1](head_size)
 
                 # Save the score to the attention buffer
@@ -804,23 +804,23 @@ fn transformer(
             # Softmax the scores to get attention weights, from 0..pos inclusively
             softmax(state.att, att_offset, att_offset + pos + 1)
             # Weighted sum of the values, store back into xb
-            let xb_offset = h * head_size
+            var xb_offset = h * head_size
             for t in range(pos + 1):
                 # Starting index of the value vector for this head and at this timestep
-                let v_offset = loff + t * kv_dim + (h // kv_mul) * head_size
+                var v_offset = loff + t * kv_dim + (h // kv_mul) * head_size
 
                 # Get the attention weight for this timestep
-                let a = state.att[att_offset + t]
+                var a = state.att[att_offset + t]
                 # Accumulate the weighted value into xb
 
                 @parameter
                 fn xb_accumulate[_nelts: Int](i: Int):
-                    let xbi = state.xb.simd_load[_nelts](
+                    var xbi = state.xb.simd_load[_nelts](
                         xb_offset + i
                     ) + a * state.value_cache.simd_load[_nelts](v_offset + i)
                     state.xb.simd_store[_nelts](xb_offset + i, xbi)
 
-                vectorize[nelts, xb_accumulate](head_size)
+                vectorize[xb_accumulate, nelts](head_size)
 
         parallelize[loop_over_heads](config.n_heads, workers)
         # Final matrix multiplication to get the output of the attention
@@ -843,13 +843,13 @@ fn transformer(
 
         @parameter
         fn silu[_nelts: Int](i: Int):
-            let initial_hb = state.hb.simd_load[_nelts](i)
+            var initial_hb = state.hb.simd_load[_nelts](i)
             # Apply SiLU activation function (silu(x) = x * sigmoid(x))
-            let hbi = initial_hb * (1.0 / (1.0 + math.exp(-initial_hb)))
+            var hbi = initial_hb * (1.0 / (1.0 + math.exp(-initial_hb)))
             # Elementwise multiply with w3(x)
             state.hb.simd_store[_nelts](i, hbi * state.hb2.simd_load[_nelts](i))
 
-        vectorize[nelts, silu](hidden_dim)
+        vectorize[silu, nelts](hidden_dim)
         # Final matrix multiplication to get the output of the FFN
         matmul(state.xb, state.hb, TensorSlice(weights.w2, l))
 
@@ -875,10 +875,10 @@ fn argmax(v: TensorF32) -> Int:
 
 
 fn sample(probabilities: TensorF32) -> Int:
-    let n = probabilities.dim(0)
+    var n = probabilities.dim(0)
     # Sample index from probabilities, they must sum to 1
     # get random value within (min, max) float32 range
-    let r = rand[DType.float32](1)
+    var r = rand[DType.float32](1)
     var cdf: Float32 = 0.0
     for i in range(n):
         cdf += probabilities[i]
@@ -889,8 +889,8 @@ fn sample(probabilities: TensorF32) -> Int:
 
 fn bpe_encode(inout tokens: DynamicVector[Int], text: String, inout tok: Tokenizer):
     for pos in range(len(text)):
-        let char = str_to_ptr(text[pos])
-        let id = tok.find(char)
+        var char = str_to_ptr(text[pos])
+        var id = tok.find(char)
         if id == -1:
             print("Not a good prompt token at pos ", pos)
             return
@@ -903,8 +903,8 @@ fn bpe_encode(inout tokens: DynamicVector[Int], text: String, inout tok: Tokeniz
 
         for i in range(len(tokens) - 1):
             # Check if we can merge the pair (tokens[i], tokens[i+1])
-            let str = str_concat(tok.vocab[tokens[i]], tok.vocab[tokens[i + 1]])
-            let id = tok.find(str)
+            var str = str_concat(tok.vocab[tokens[i]], tok.vocab[tokens[i + 1]])
+            var id = tok.find(str)
             if id != -1 and tok.vocab_scores.load(id) > best_score:
                 best_score = tok.vocab_scores.load(id)
                 best_id = id
@@ -935,8 +935,8 @@ fn str2num(d: Int) -> Int:
 fn print_str(s: PointerString):
     # print raw byte like <0x0A>
     if (s[1].to_int() == ord("0")) and (s[2].to_int() == ord("x")):
-        let d1: Int = s[3].to_int()
-        let d2: Int = s[4].to_int()
+        var d1: Int = s[3].to_int()
+        var d2: Int = s[4].to_int()
         print_no_newline(chr(str2num(d1) * 16 + str2num(d2)))
         return
     # print all chars till null character
@@ -978,7 +978,7 @@ fn main() raises:
 
     @parameter
     fn argparse() raises -> Int:
-        let args = argv()
+        var args = argv()
         if len(args) < 2:
             return 0
         checkpoint = args[1]
@@ -998,7 +998,7 @@ fn main() raises:
             if args[i] == "-pc":
                 print_config = atol(args[i + 1])
             if args[i] == "-t":
-                let val = args[i + 1]
+                var val = args[i + 1]
                 temperature = 0.0
                 # hacky parse float, keep only 1 digit
                 for c in range(0, len(val)):
@@ -1012,15 +1012,15 @@ fn main() raises:
                     return 0
         return 1
 
-    let res = argparse()
+    var res = argparse()
     if res == 0:
         print_usage()
         return
 
     print("num parallel workers:", workers, " SIMD width:", nelts)
     random.seed(rng_seed)
-    let config = Config(checkpoint, print_config == 1)
-    let weights = TransformerWeights(checkpoint, config)
+    var config = Config(checkpoint, print_config == 1)
+    var weights = TransformerWeights(checkpoint, config)
 
     if steps <= 0 or steps > config.seq_len:
         steps = config.seq_len
@@ -1091,5 +1091,5 @@ fn main() raises:
         if start == 0:
             start = time_in_ms()
 
-    let end = time_in_ms()
+    var end = time_in_ms()
     print("\nachieved tok/s: ", (pos - 1) / (end - start) * 1000)
