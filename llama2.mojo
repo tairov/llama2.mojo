@@ -170,8 +170,8 @@ fn str_concat(s1: PointerString, s2: PointerString) -> PointerString:
     var l1 = str_len(s1)
     var l2 = str_len(s2)
     var str = PointerString.alloc(l1 + l2 + 1)
-    memcpy[UInt8](str, s1, l1)
-    memcpy[UInt8](str.offset(l1), s2, l2)
+    memcpy(str, s1, l1)
+    memcpy(str.offset(l1), s2, l2)
     str.store(l1 + l2, 0)
     return str
 
@@ -727,7 +727,7 @@ fn transformer(
 
     # Copy the token embedding into x
     var content_row = weights.token_embedding_table.data().offset(token * dim)
-    memcpy[DType.float32](state.x.data(), content_row, dim)
+    memcpy(state.x.data(), content_row, dim)
 
     # Pluck out the "pos" row of freq_cis_real and freq_cis_imag
     var freq_cis_real_row = TensorSlice(weights.freq_cis_real, pos)
