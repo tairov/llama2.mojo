@@ -46,12 +46,12 @@ struct Accumulator[T: DType, width: Int]:
     fn accumulate[_width: Int](inout self, val: SIMD[T, _width]) -> None:
         # This is a hack to make sure both SIMD have _width length.
         # SIMD[T, width] += SIMD[T, _width] is always an error.
-        var newVal = self.data.simd_load[_width]() + val
-        self.data.simd_store[_width](newVal)
+        var newVal = self.data.load[_width]() + val
+        self.data.load[_width](newVal)
 
     @always_inline
     fn total(self) -> SIMD[T, 1]:
-        return self.data.simd_load[width]().reduce_add()
+        return self.data.load[width]().reduce_add()
 
 
 struct TensorSlice:
@@ -107,30 +107,30 @@ struct TensorSlice:
     fn rank(self) -> Int:
         return self._shape.rank()
 
-    fn simd_load[nelts: Int](self, idx: Int) -> SIMD[DType.float32, nelts]:
-        return self._data.simd_load[nelts](idx)
+    fn load[nelts: Int](self, idx: Int) -> SIMD[DType.float32, nelts]:
+        return self._data.load[nelts](idx)
 
-    fn simd_load[nelts: Int](self, *indices: Int) -> SIMD[DType.float32, nelts]:
+    fn load[nelts: Int](self, *indices: Int) -> SIMD[DType.float32, nelts]:
         if len(VariadicList(indices)) > 2:
             print(
                 "Warning: TensorSlice only supports 1D and 2D indexing.  Results are"
                 " unlikely to be correct."
             )
-        return self.simd_load[nelts](indices[0] * self._shape[1] + indices[1])
+        return self.load[nelts](indices[0] * self._shape[1] + indices[1])
 
-    fn simd_load[
+    fn load[
         nelts: Int
     ](self, indices: StaticIntTuple[2]) -> SIMD[DType.float32, nelts]:
-        return self._data.simd_load[nelts](indices[0] * self._shape[1] + indices[1])
+        return self._data.load[nelts](indices[0] * self._shape[1] + indices[1])
 
     fn __getitem__(self, idx: Int) -> SIMD[DType.float32, 1]:
-        return self._data.simd_load[1](idx)
+        return self._data.load[1](idx)
 
-    fn simd_store[nelts: Int](self, idx: Int, val: SIMD[DType.float32, nelts]):
-        return self._data.simd_store[nelts](idx, val)
+    fn load[nelts: Int](self, idx: Int, val: SIMD[DType.float32, nelts]):
+        return self._data.load[nelts](idx, val)
 
     fn __setitem__(self, idx: Int, val: SIMD[DType.float32, 1]):
-        return self.simd_store[1](idx, val)
+        return self.load[1](idx, val)
 
 
 fn read_val_int(inout buf: FileBuf) raises -> Int:
@@ -513,8 +513,8 @@ fn accum(inout a: TensorF32, b: TensorF32) -> None:
     var size = a.dim(0)
 
     @parameter
-    fn _acc[_nelts: Int](j: Int):
-        a.simd_store[_nelts](j, a.simd_load[_nelts](j) + b.simd_load[_nelts](j))
+    fn _acc[width=_nelts: Int](j: Int):
+        a.load[width=_nelts](j, a.load[width=_nelts](j) + b.load[width=_nelts](j))
 
     vectorize[_acc, nelts](size)
 
@@ -527,8 +527,8 @@ fn rmsnorm(
     var tmp = Accumulator[DType.float32, nelts]()
 
     @parameter
-    fn _sum2[_nelts: Int](j: Int):
-        tmp.accumulate(x.offset(j).simd_load[_nelts](0) ** 2)
+    fn _sum2[width=_nelts: Int](j: Int):
+        tmp.accumulate(x.offset(j).load[width=_nelts](0) ** 2)
 
     vectorize[_sum2, nelts](size)
 
@@ -538,9 +538,9 @@ fn rmsnorm(
 
     # Normalize and scale
     @parameter
-    fn _norm[_nelts: Int](j: Int):
-        var val = weight.simd_load[_nelts](j) * ss * x.simd_load[_nelts](j)
-        o.offset(j).simd_store[_nelts](0, val)
+    fn _norm[width=_nelts: Int](j: Int):
+        var val = weight.load[width=_nelts](j) * ss * x.load[width=_nelts](j)
+        o.offset(j).load[width=_nelts](0, val)
 
     vectorize[_norm, nelts](size)
 
@@ -565,8 +565,8 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
     var max_val: Float32 = -1e9
 
     @parameter
-    fn _max[_nelts: Int](ii: Int):
-        var val = x.simd_load[_nelts](start + ii).reduce_max()
+    fn _max[width=_nelts: Int](ii: Int):
+        var val = x.load[width=_nelts](start + ii).reduce_max()
         if val > max_val:
             max_val = val
 
@@ -575,9 +575,9 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
     var acc = Accumulator[DType.float32, nelts]()
 
     @parameter
-    fn _exp[_nelts: Int](ii: Int):
-        var val = math.exp(x.simd_load[_nelts](start + ii) - max_val)
-        x.simd_store[_nelts](start + ii, val)
+    fn _exp[width=_nelts: Int](ii: Int):
+        var val = math.exp(x.load[width=_nelts](start + ii) - max_val)
+        x.load[width=_nelts](start + ii, val)
         acc.accumulate(val)
 
     vectorize[_exp, nelts](end - start)
@@ -585,8 +585,8 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
     var ssum = acc.total()
 
     @parameter
-    fn _norm[_nelts: Int](ii: Int):
-        x.simd_store[_nelts](start + ii, x.simd_load[_nelts](start + ii) / ssum)
+    fn _norm[width=_nelts: Int](ii: Int):
+        x.load[width=_nelts](start + ii, x.load[width=_nelts](start + ii) / ssum)
 
     vectorize[_norm, nelts](end - start)
 
@@ -612,12 +612,12 @@ fn batch_matmul[
         var row_offset = i * cols
 
         @parameter
-        fn dot[_nelts: Int](j: Int):
-            var a = A.simd_load[_nelts](j)
+        fn dot[width=_nelts: Int](j: Int):
+            var a = A.load[width=_nelts](j)
 
             @unroll
             for k in range(n):
-                tmp[k].accumulate(a * B[k].simd_load[_nelts](row_offset + j))
+                tmp[k].accumulate(a * B[k].load[width=_nelts](row_offset + j))
 
         vectorize[dot, nelts](cols)
 
@@ -789,10 +789,10 @@ fn transformer(
                 var score: Float32 = 0.0
 
                 @parameter
-                fn score_fn[_nelts: Int](i: Int):
+                fn score_fn[width=_nelts: Int](i: Int):
                     score += (
-                        state.q.simd_load[_nelts](q_offset + i)
-                        * state.key_cache.simd_load[_nelts](k_offset + i)
+                        state.q.load[width=_nelts](q_offset + i)
+                        * state.key_cache.load[width=_nelts](k_offset + i)
                     ).reduce_add()
 
                 vectorize[score_fn, nelts](head_size)
@@ -814,11 +814,11 @@ fn transformer(
                 # Accumulate the weighted value into xb
 
                 @parameter
-                fn xb_accumulate[_nelts: Int](i: Int):
-                    var xbi = state.xb.simd_load[_nelts](
+                fn xb_accumulate[width=_nelts: Int](i: Int):
+                    var xbi = state.xb.load[width=_nelts](
                         xb_offset + i
-                    ) + a * state.value_cache.simd_load[_nelts](v_offset + i)
-                    state.xb.simd_store[_nelts](xb_offset + i, xbi)
+                    ) + a * state.value_cache.load[width=_nelts](v_offset + i)
+                    state.xb.load[width=_nelts](xb_offset + i, xbi)
 
                 vectorize[xb_accumulate, nelts](head_size)
 
@@ -842,12 +842,12 @@ fn transformer(
         )
 
         @parameter
-        fn silu[_nelts: Int](i: Int):
-            var initial_hb = state.hb.simd_load[_nelts](i)
+        fn silu[width=_nelts: Int](i: Int):
+            var initial_hb = state.hb.load[width=_nelts](i)
             # Apply SiLU activation function (silu(x) = x * sigmoid(x))
             var hbi = initial_hb * (1.0 / (1.0 + math.exp(-initial_hb)))
             # Elementwise multiply with w3(x)
-            state.hb.simd_store[_nelts](i, hbi * state.hb2.simd_load[_nelts](i))
+            state.hb.load[width=_nelts](i, hbi * state.hb2.load[width=_nelts](i))
 
         vectorize[silu, nelts](hidden_dim)
         # Final matrix multiplication to get the output of the FFN
