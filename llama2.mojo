@@ -46,12 +46,12 @@ struct Accumulator[T: DType, width: Int]:
     fn accumulate[_width: Int](inout self, val: SIMD[T, _width]) -> None:
         # This is a hack to make sure both SIMD have _width length.
         # SIMD[T, width] += SIMD[T, _width] is always an error.
-        var newVal = self.data.load[_width]() + val
-        self.data.load[_width](newVal)
+        var newVal = self.data.load[width=_width]() + val
+        self.data.load[width=_width](newVal)
 
     @always_inline
     fn total(self) -> SIMD[T, 1]:
-        return self.data.load[width]().reduce_add()
+        return self.data.load[width=width]().reduce_add()
 
 
 struct TensorSlice:
@@ -108,7 +108,7 @@ struct TensorSlice:
         return self._shape.rank()
 
     fn load[nelts: Int](self, idx: Int) -> SIMD[DType.float32, nelts]:
-        return self._data.load[nelts](idx)
+        return self._data.load[width=nelts](idx)
 
     fn load[nelts: Int](self, *indices: Int) -> SIMD[DType.float32, nelts]:
         if len(VariadicList(indices)) > 2:
@@ -116,21 +116,21 @@ struct TensorSlice:
                 "Warning: TensorSlice only supports 1D and 2D indexing.  Results are"
                 " unlikely to be correct."
             )
-        return self.load[nelts](indices[0] * self._shape[1] + indices[1])
+        return self.load[width=nelts](indices[0] * self._shape[1] + indices[1])
 
     fn load[
         nelts: Int
     ](self, indices: StaticIntTuple[2]) -> SIMD[DType.float32, nelts]:
-        return self._data.load[nelts](indices[0] * self._shape[1] + indices[1])
+        return self._data.load[width=nelts](indices[0] * self._shape[1] + indices[1])
 
     fn __getitem__(self, idx: Int) -> SIMD[DType.float32, 1]:
-        return self._data.load[1](idx)
+        return self._data.load[width=1](idx)
 
     fn load[nelts: Int](self, idx: Int, val: SIMD[DType.float32, nelts]):
-        return self._data.load[nelts](idx, val)
+        return self._data.load[width=nelts](idx, val)
 
     fn __setitem__(self, idx: Int, val: SIMD[DType.float32, 1]):
-        return self.load[1](idx, val)
+        return self.load[width=1](idx, val)
 
 
 fn read_val_int(inout buf: FileBuf) raises -> Int:
@@ -332,7 +332,7 @@ struct Tokenizer:
             self.sorted_vocab = PointerStrings.alloc(self.vocab_size)
             for ii in range(self.vocab_size):
                 self.sorted_vocab.store(ii, self.vocab[ii])
-                self.sorted_indices.push_back(ii)
+                self.sorted_indices.append(ii)
 
         var n = self.vocab_size
         quicksort(self.sorted_vocab, self.sorted_indices, 0, n - 1)
@@ -894,7 +894,7 @@ fn bpe_encode(inout tokens: List[Int], text: String, inout tok: Tokenizer):
         if id == -1:
             print("Not a good prompt token at pos ", pos)
             return
-        tokens.push_back(id)
+        tokens.append(id)
 
     while True:
         var best_score = Float32(-1e10)
@@ -919,9 +919,9 @@ fn bpe_encode(inout tokens: List[Int], text: String, inout tok: Tokenizer):
         # Delete token at position best_idx+1, shift the entire sequence back 1
         var _tokens = List[Int]()
         for i in range(0, best_idx + 1):
-            _tokens.push_back(tokens[i])
+            _tokens.append(tokens[i])
         for i in range(best_idx + 2, len(tokens)):
-            _tokens.push_back(tokens[i])
+            _tokens.append(tokens[i])
         tokens = _tokens
 
 
