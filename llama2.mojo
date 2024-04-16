@@ -595,15 +595,15 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
 fn batch_matmul[
     n: Int
 ](
-    C: StaticTuple[n, BufferPtrFloat32],
+    C: StaticTuple[BufferPtrFloat32, n],
     A: BufferPtrFloat32,
-    B: StaticTuple[n, BufferPtrFloat32],
+    B: StaticTuple[BufferPtrFloat32, n],
     rows: Int,
     cols: Int,
 ):
     @parameter
     fn compute_row(i: Int):
-        var tmp = StaticTuple[n, Accumulator[DType.float32, nelts]]()
+        var tmp = StaticTuple[Accumulator[DType.float32, nelts], n]()
 
         @unroll
         for k in range(n):
@@ -633,9 +633,9 @@ fn matmul(C: TensorF32, A: TensorF32, B: TensorF32) raises:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_dimension_checks(A.shape(), B.shape())
     batch_matmul[1](
-        StaticTuple[1, BufferPtrFloat32](C.data()),
+        StaticTuple[BufferPtrFloat32, 1](C.data()),
         A.data(),
-        StaticTuple[1, BufferPtrFloat32](B.data()),
+        StaticTuple[BufferPtrFloat32, 1](B.data()),
         B.dim(0),
         B.dim(1),
     )
@@ -646,9 +646,9 @@ fn matmul(C: TensorF32, A: TensorF32, B: TensorSlice) raises:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_dimension_checks(A.shape(), B.shape())
     batch_matmul[1](
-        StaticTuple[1, BufferPtrFloat32](C.data()),
+        StaticTuple[BufferPtrFloat32, 1](C.data()),
         A.data(),
-        StaticTuple[1, BufferPtrFloat32](B.data()),
+        StaticTuple[BufferPtrFloat32, 1](B.data()),
         B.dim(0),
         B.dim(1),
     )
@@ -659,11 +659,11 @@ fn matmul(C: TensorSlice, A: TensorF32, B: TensorSlice) raises:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_dimension_checks(A.shape(), B.shape())
     batch_matmul[1](
-        StaticTuple[1, BufferPtrFloat32](
+        StaticTuple[BufferPtrFloat32, 1](
             C.data(),
         ),
         A.data(),
-        StaticTuple[1, BufferPtrFloat32](B.data()),
+        StaticTuple[BufferPtrFloat32, 1](B.data()),
         B.dim(0),
         B.dim(1),
     )
@@ -743,11 +743,11 @@ fn transformer(
         state.v = TensorSlice(state.value_cache, l, pos)
         if kv_dim == dim:
             batch_matmul[3](
-                StaticTuple[3, BufferPtrFloat32](
+                StaticTuple[BufferPtrFloat32, 3](
                     state.q.data(), state.k.data(), state.v.data()
                 ),
                 state.xb.data(),
-                StaticTuple[3, BufferPtrFloat32](
+                StaticTuple[BufferPtrFloat32, 3](
                     TensorSlice(weights.wq, l).data(),
                     TensorSlice(weights.wk, l).data(),
                     TensorSlice(weights.wv, l).data(),
@@ -758,9 +758,9 @@ fn transformer(
         else:
             matmul(state.q, state.xb, TensorSlice(weights.wq, l))
             batch_matmul[2](
-                StaticTuple[2, BufferPtrFloat32](state.k.data(), state.v.data()),
+                StaticTuple[BufferPtrFloat32, 2](state.k.data(), state.v.data()),
                 state.xb.data(),
-                StaticTuple[2, BufferPtrFloat32](
+                StaticTuple[BufferPtrFloat32, 2](
                     TensorSlice(weights.wk, l).data(), TensorSlice(weights.wv, l).data()
                 ),
                 kv_dim,
@@ -832,9 +832,9 @@ fn transformer(
 
         # Calculate self.w1(x) and self.w3(x) for FFN
         batch_matmul[2](
-            StaticTuple[2, BufferPtrFloat32](state.hb.data(), state.hb2.data()),
+            StaticTuple[BufferPtrFloat32, 2](state.hb.data(), state.hb2.data()),
             state.xb.data(),
-            StaticTuple[2, BufferPtrFloat32](
+            StaticTuple[BufferPtrFloat32, 2](
                 TensorSlice(weights.w1, l).data(), TensorSlice(weights.w3, l).data()
             ),
             hidden_dim,
