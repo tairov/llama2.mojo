@@ -205,7 +205,7 @@ fn string_compare(a: PointerString, b: PointerString) -> Int:
 
 # Quicksort helper function to find the partition position
 fn partition(
-    inout array: PointerStrings, inout indices: DynamicVector[Int], low: Int, high: Int
+    inout array: PointerStrings, inout indices: List[Int], low: Int, high: Int
 ) -> Int:
     var pivot = array[high]
     var ii = low - 1
@@ -233,7 +233,7 @@ fn partition(
 
 
 fn quicksort(
-    inout array: PointerStrings, inout indices: DynamicVector[Int], low: Int, high: Int
+    inout array: PointerStrings, inout indices: List[Int], low: Int, high: Int
 ):
     if low < high:
         var pi = partition(array, indices, low, high)
@@ -293,7 +293,7 @@ struct Tokenizer:
     var max_token_length: Int
     var vocab_size: Int
     var sorted_vocab: PointerStrings
-    var sorted_indices: DynamicVector[Int]
+    var sorted_indices: List[Int]
 
     fn __init__(inout self, vocab_size: Int, inout buf: FileBuf) raises -> None:
         self.vocab_size = vocab_size
@@ -302,7 +302,7 @@ struct Tokenizer:
         self.vocab = PointerStrings.alloc(self.vocab_size)
         # lazy load sorted vocab
         self.sorted_vocab = PointerStrings.alloc(0)
-        self.sorted_indices = DynamicVector[Int]()
+        self.sorted_indices = List[Int]()
 
         # read vocab_scores & vocab values (tokens)
         for i in range(0, self.vocab_size):
@@ -328,7 +328,7 @@ struct Tokenizer:
     # sort vocab by string_compare
     fn sort(inout self) -> None:
         if len(self.sorted_indices) < self.vocab_size:
-            self.sorted_indices = DynamicVector[Int](capacity=self.vocab_size)
+            self.sorted_indices = List[Int](capacity=self.vocab_size)
             self.sorted_vocab = PointerStrings.alloc(self.vocab_size)
             for ii in range(self.vocab_size):
                 self.sorted_vocab.store(ii, self.vocab[ii])
@@ -887,7 +887,7 @@ fn sample(probabilities: TensorF32) -> Int:
     return n - 1  # In case of rounding errors
 
 
-fn bpe_encode(inout tokens: DynamicVector[Int], text: String, inout tok: Tokenizer):
+fn bpe_encode(inout tokens: List[Int], text: String, inout tok: Tokenizer):
     for pos in range(len(text)):
         var char = str_to_ptr(text[pos])
         var id = tok.find(char)
@@ -917,7 +917,7 @@ fn bpe_encode(inout tokens: DynamicVector[Int], text: String, inout tok: Tokeniz
         # Merge the consecutive pair (best_idx, best_idx+1) into new token best_id
         tokens[best_idx] = best_id
         # Delete token at position best_idx+1, shift the entire sequence back 1
-        var _tokens = DynamicVector[Int]()
+        var _tokens = List[Int]()
         for i in range(0, best_idx + 1):
             _tokens.push_back(tokens[i])
         for i in range(best_idx + 2, len(tokens)):
@@ -1041,7 +1041,7 @@ fn main() raises:
     var state = RunState(config)
 
     # Process the prompt, if any
-    var prompt_tokens = DynamicVector[Int]()
+    var prompt_tokens = List[Int]()
 
     if prompt:
         bpe_encode(prompt_tokens, prompt, tok)
