@@ -127,7 +127,7 @@ struct TensorSlice:
         return self._data.load[width=1](idx)
 
     fn load[nelts: Int](self, idx: Int, val: SIMD[DType.float32, nelts]):
-        return self._data.load[width=nelts](idx, val)
+        return self._data.load[nelts](idx, val)
 
     fn __setitem__(self, idx: Int, val: SIMD[DType.float32, 1]):
         return self.load[width=1](idx, val)
@@ -379,7 +379,7 @@ struct Config:
         var config_data_raw = f.read_bytes(bytes_of_config_params)
         f.close()
         # correct Tensor type and shape for easy reading, without copying data
-        var int32_ptr = config_data_raw._steal_ptr().bitcast[DType.int32]()
+        var int32_ptr = config_data_raw.bitcast[DType.int32]()
         var config_data = Tensor[DType.int32](int32_ptr, NUM_CONFIG_INT)
         self.dim = config_data[0].to_int()
         self.hidden_dim = config_data[1].to_int()
@@ -466,7 +466,7 @@ struct TransformerWeights:
             # So we can't reshape to target shape because dims don't match
             var tmp = f.read_bytes(shape.num_elements() * sizeof[DType.float32]())
             bytes_read += shape.num_elements() * sizeof[DType.float32]()
-            var data = tmp._steal_ptr().bitcast[DType.float32]()
+            var data = tmp.bitcast[DType.float32]()
             return TensorF32(data, shape)
 
         self.token_embedding_table = read_weights(config.vocab_size, config.dim)
@@ -503,7 +503,7 @@ fn read_file(file_name: String, inout buf: FileBuf) raises:
     var data = fd.read()
     fd.close()
     buf.size = data._buffer.size
-    buf.data = data._steal_ptr().bitcast[DType.uint8]()
+    buf.data = data.bitcast[DType.uint8]()
     buf.offset = 0
     return None
 
