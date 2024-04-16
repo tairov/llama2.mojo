@@ -1,5 +1,5 @@
 from algorithm import sum
-from algorithm import vectorize, parallelize, unroll
+from algorithm import vectorize, parallelize
 from builtin import string
 from math import round
 from memory import memset_zero, memcpy, stack_allocation
@@ -513,7 +513,7 @@ fn accum(inout a: TensorF32, b: TensorF32) -> None:
     var size = a.dim(0)
 
     @parameter
-    fn _acc[width=_nelts: Int](j: Int):
+    fn _acc[_nelts: Int](j: Int):
         a.load[width=_nelts](j, a.load[width=_nelts](j) + b.load[width=_nelts](j))
 
     vectorize[_acc, nelts](size)
@@ -527,7 +527,7 @@ fn rmsnorm(
     var tmp = Accumulator[DType.float32, nelts]()
 
     @parameter
-    fn _sum2[width=_nelts: Int](j: Int):
+    fn _sum2[_nelts: Int](j: Int):
         tmp.accumulate(x.offset(j).load[width=_nelts](0) ** 2)
 
     vectorize[_sum2, nelts](size)
@@ -538,7 +538,7 @@ fn rmsnorm(
 
     # Normalize and scale
     @parameter
-    fn _norm[width=_nelts: Int](j: Int):
+    fn _norm[_nelts: Int](j: Int):
         var val = weight.load[width=_nelts](j) * ss * x.load[width=_nelts](j)
         o.offset(j).load[width=_nelts](0, val)
 
@@ -565,7 +565,7 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
     var max_val: Float32 = -1e9
 
     @parameter
-    fn _max[width=_nelts: Int](ii: Int):
+    fn _max[_nelts: Int](ii: Int):
         var val = x.load[width=_nelts](start + ii).reduce_max()
         if val > max_val:
             max_val = val
@@ -575,7 +575,7 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
     var acc = Accumulator[DType.float32, nelts]()
 
     @parameter
-    fn _exp[width=_nelts: Int](ii: Int):
+    fn _exp[_nelts: Int](ii: Int):
         var val = math.exp(x.load[width=_nelts](start + ii) - max_val)
         x.load[width=_nelts](start + ii, val)
         acc.accumulate(val)
@@ -585,7 +585,7 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
     var ssum = acc.total()
 
     @parameter
-    fn _norm[width=_nelts: Int](ii: Int):
+    fn _norm[_nelts: Int](ii: Int):
         x.load[width=_nelts](start + ii, x.load[width=_nelts](start + ii) / ssum)
 
     vectorize[_norm, nelts](end - start)
@@ -612,7 +612,7 @@ fn batch_matmul[
         var row_offset = i * cols
 
         @parameter
-        fn dot[width=_nelts: Int](j: Int):
+        fn dot[_nelts: Int](j: Int):
             var a = A.load[width=_nelts](j)
 
             @unroll
@@ -789,7 +789,7 @@ fn transformer(
                 var score: Float32 = 0.0
 
                 @parameter
-                fn score_fn[width=_nelts: Int](i: Int):
+                fn score_fn[_nelts: Int](i: Int):
                     score += (
                         state.q.load[width=_nelts](q_offset + i)
                         * state.key_cache.load[width=_nelts](k_offset + i)
@@ -814,7 +814,7 @@ fn transformer(
                 # Accumulate the weighted value into xb
 
                 @parameter
-                fn xb_accumulate[width=_nelts: Int](i: Int):
+                fn xb_accumulate[_nelts: Int](i: Int):
                     var xbi = state.xb.load[width=_nelts](
                         xb_offset + i
                     ) + a * state.value_cache.load[width=_nelts](v_offset + i)
@@ -842,7 +842,7 @@ fn transformer(
         )
 
         @parameter
-        fn silu[width=_nelts: Int](i: Int):
+        fn silu[_nelts: Int](i: Int):
             var initial_hb = state.hb.load[width=_nelts](i)
             # Apply SiLU activation function (silu(x) = x * sigmoid(x))
             var hbi = initial_hb * (1.0 / (1.0 + math.exp(-initial_hb)))
@@ -937,12 +937,12 @@ fn print_str(s: PointerString):
     if (s[1].to_int() == ord("0")) and (s[2].to_int() == ord("x")):
         var d1: Int = s[3].to_int()
         var d2: Int = s[4].to_int()
-        print_no_newline(chr(str2num(d1) * 16 + str2num(d2)))
+        print(chr(str2num(d1) * 16 + str2num(d2)))
         return
     # print all chars till null character
     var p: Int = 0
     while s[p].to_int() != 0:
-        print_no_newline(chr(s[p].to_int()))
+        print(chr(s[p].to_int()))
         p += 1
 
 
