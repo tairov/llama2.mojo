@@ -883,8 +883,9 @@ fn sample(probabilities: TensorF32) -> Int:
     var cdf: Float32 = 0.0
     for i in range(n):
         cdf += probabilities[i]
-        if r[0] < cdf:
-            return i
+        if r:
+            if r[0] < cdf:
+                return i
     return n - 1  # In case of rounding errors
 
 
