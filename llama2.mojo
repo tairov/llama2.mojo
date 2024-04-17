@@ -1,14 +1,14 @@
 from algorithm import sum
-from algorithm import vectorize, parallelize, unroll
+from algorithm import vectorize, parallelize
 from builtin import string
 from math import round
 from memory import memset_zero, memcpy, stack_allocation
-from memory.buffer import Buffer
-from memory.unsafe import DTypePointer
-from random import rand
+from memory.unsafe import DTypePointer, bitcast, AddressSpace
+from tensor import rand
 from sys.info import num_performance_cores
 from sys import argv
 from tensor import Tensor, TensorShape, TensorSpec
+from collections.list import List
 
 # The SIMD vector width.
 from sys.info import simdwidthof
@@ -46,12 +46,12 @@ struct Accumulator[T: DType, width: Int]:
     fn accumulate[_width: Int](inout self, val: SIMD[T, _width]) -> None:
         # This is a hack to make sure both SIMD have _width length.
         # SIMD[T, width] += SIMD[T, _width] is always an error.
-        var newVal = self.data.simd_load[_width]() + val
-        self.data.simd_store[_width](newVal)
+        var newVal = self.data.load[width=_width]() + val
+        self.data.store[width=_width](newVal)
 
     @always_inline
     fn total(self) -> SIMD[T, 1]:
-        return self.data.simd_load[width]().reduce_add()
+        return self.data.load[width=width]().reduce_add()
 
 
 struct TensorSlice:
@@ -107,30 +107,28 @@ struct TensorSlice:
     fn rank(self) -> Int:
         return self._shape.rank()
 
-    fn simd_load[nelts: Int](self, idx: Int) -> SIMD[DType.float32, nelts]:
-        return self._data.simd_load[nelts](idx)
+    fn load[width: Int](self, idx: Int) -> SIMD[DType.float32, nelts]:
+        return self._data.load[width=nelts](idx)
 
-    fn simd_load[nelts: Int](self, *indices: Int) -> SIMD[DType.float32, nelts]:
+    fn load[width: Int](self, *indices: Int) -> SIMD[DType.float32, nelts]:
         if len(VariadicList(indices)) > 2:
             print(
                 "Warning: TensorSlice only supports 1D and 2D indexing.  Results are"
                 " unlikely to be correct."
             )
-        return self.simd_load[nelts](indices[0] * self._shape[1] + indices[1])
+        return self.load[width=nelts](indices[0] * self._shape[1] + indices[1])
 
-    fn simd_load[
-        nelts: Int
-    ](self, indices: StaticIntTuple[2]) -> SIMD[DType.float32, nelts]:
-        return self._data.simd_load[nelts](indices[0] * self._shape[1] + indices[1])
+    fn load[width: Int](self, indices: StaticIntTuple[2]) -> SIMD[DType.float32, nelts]:
+        return self._data.load[width=nelts](indices[0] * self._shape[1] + indices[1])
 
     fn __getitem__(self, idx: Int) -> SIMD[DType.float32, 1]:
-        return self._data.simd_load[1](idx)
+        return self._data.load[width=1](idx)
 
-    fn simd_store[nelts: Int](self, idx: Int, val: SIMD[DType.float32, nelts]):
-        return self._data.simd_store[nelts](idx, val)
+    fn store[nelts: Int](self, idx: Int, val: SIMD[DType.float32, nelts]):
+        return self._data.store[width=nelts](idx, val)
 
     fn __setitem__(self, idx: Int, val: SIMD[DType.float32, 1]):
-        return self.simd_store[1](idx, val)
+        return self.store[1](idx, val)
 
 
 fn read_val_int(inout buf: FileBuf) raises -> Int:
@@ -170,8 +168,8 @@ fn str_concat(s1: PointerString, s2: PointerString) -> PointerString:
     var l1 = str_len(s1)
     var l2 = str_len(s2)
     var str = PointerString.alloc(l1 + l2 + 1)
-    memcpy[UInt8](str, s1, l1)
-    memcpy[UInt8](str.offset(l1), s2, l2)
+    memcpy(str, s1, l1)
+    memcpy(str.offset(l1), s2, l2)
     str.store(l1 + l2, 0)
     return str
 
@@ -205,7 +203,7 @@ fn string_compare(a: PointerString, b: PointerString) -> Int:
 
 # Quicksort helper function to find the partition position
 fn partition(
-    inout array: PointerStrings, inout indices: DynamicVector[Int], low: Int, high: Int
+    inout array: PointerStrings, inout indices: List[Int], low: Int, high: Int
 ) -> Int:
     var pivot = array[high]
     var ii = low - 1
@@ -233,7 +231,7 @@ fn partition(
 
 
 fn quicksort(
-    inout array: PointerStrings, inout indices: DynamicVector[Int], low: Int, high: Int
+    inout array: PointerStrings, inout indices: List[Int], low: Int, high: Int
 ):
     if low < high:
         var pi = partition(array, indices, low, high)
@@ -293,7 +291,7 @@ struct Tokenizer:
     var max_token_length: Int
     var vocab_size: Int
     var sorted_vocab: PointerStrings
-    var sorted_indices: DynamicVector[Int]
+    var sorted_indices: List[Int]
 
     fn __init__(inout self, vocab_size: Int, inout buf: FileBuf) raises -> None:
         self.vocab_size = vocab_size
@@ -302,7 +300,7 @@ struct Tokenizer:
         self.vocab = PointerStrings.alloc(self.vocab_size)
         # lazy load sorted vocab
         self.sorted_vocab = PointerStrings.alloc(0)
-        self.sorted_indices = DynamicVector[Int]()
+        self.sorted_indices = List[Int]()
 
         # read vocab_scores & vocab values (tokens)
         for i in range(0, self.vocab_size):
@@ -328,11 +326,11 @@ struct Tokenizer:
     # sort vocab by string_compare
     fn sort(inout self) -> None:
         if len(self.sorted_indices) < self.vocab_size:
-            self.sorted_indices = DynamicVector[Int](capacity=self.vocab_size)
+            self.sorted_indices = List[Int](capacity=self.vocab_size)
             self.sorted_vocab = PointerStrings.alloc(self.vocab_size)
             for ii in range(self.vocab_size):
                 self.sorted_vocab.store(ii, self.vocab[ii])
-                self.sorted_indices.push_back(ii)
+                self.sorted_indices.append(ii)
 
         var n = self.vocab_size
         quicksort(self.sorted_vocab, self.sorted_indices, 0, n - 1)
@@ -379,7 +377,7 @@ struct Config:
         var config_data_raw = f.read_bytes(bytes_of_config_params)
         f.close()
         # correct Tensor type and shape for easy reading, without copying data
-        var int32_ptr = config_data_raw._steal_ptr().bitcast[DType.int32]()
+        var int32_ptr = DTypePointer[DType.int8](config_data_raw.steal_data().value).bitcast[DType.int32]()
         var config_data = Tensor[DType.int32](int32_ptr, NUM_CONFIG_INT)
         self.dim = config_data[0].to_int()
         self.hidden_dim = config_data[1].to_int()
@@ -466,7 +464,8 @@ struct TransformerWeights:
             # So we can't reshape to target shape because dims don't match
             var tmp = f.read_bytes(shape.num_elements() * sizeof[DType.float32]())
             bytes_read += shape.num_elements() * sizeof[DType.float32]()
-            var data = tmp._steal_ptr().bitcast[DType.float32]()
+            var data = DTypePointer[DType.int8](tmp.steal_data().value).bitcast[DType.float32]()
+
             return TensorF32(data, shape)
 
         self.token_embedding_table = read_weights(config.vocab_size, config.dim)
@@ -514,7 +513,7 @@ fn accum(inout a: TensorF32, b: TensorF32) -> None:
 
     @parameter
     fn _acc[_nelts: Int](j: Int):
-        a.simd_store[_nelts](j, a.simd_load[_nelts](j) + b.simd_load[_nelts](j))
+        a.store[width=_nelts](j, a.load[width=_nelts](j) + b.load[width=_nelts](j))
 
     vectorize[_acc, nelts](size)
 
@@ -528,7 +527,7 @@ fn rmsnorm(
 
     @parameter
     fn _sum2[_nelts: Int](j: Int):
-        tmp.accumulate(x.offset(j).simd_load[_nelts](0) ** 2)
+        tmp.accumulate(x.offset(j).load[width=_nelts](0) ** 2)
 
     vectorize[_sum2, nelts](size)
 
@@ -539,8 +538,8 @@ fn rmsnorm(
     # Normalize and scale
     @parameter
     fn _norm[_nelts: Int](j: Int):
-        var val = weight.simd_load[_nelts](j) * ss * x.simd_load[_nelts](j)
-        o.offset(j).simd_store[_nelts](0, val)
+        var val = weight.load[width=_nelts](j) * ss * x.load[width=_nelts](j)
+        o.offset(j).store[width=_nelts](0, val)
 
     vectorize[_norm, nelts](size)
 
@@ -566,7 +565,7 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
 
     @parameter
     fn _max[_nelts: Int](ii: Int):
-        var val = x.simd_load[_nelts](start + ii).reduce_max()
+        var val = x.load[width=_nelts](start + ii).reduce_max()
         if val > max_val:
             max_val = val
 
@@ -576,8 +575,8 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
 
     @parameter
     fn _exp[_nelts: Int](ii: Int):
-        var val = math.exp(x.simd_load[_nelts](start + ii) - max_val)
-        x.simd_store[_nelts](start + ii, val)
+        var val = math.exp(x.load[width=_nelts](start + ii) - max_val)
+        x.store[width=_nelts](start + ii, val)
         acc.accumulate(val)
 
     vectorize[_exp, nelts](end - start)
@@ -586,7 +585,7 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
 
     @parameter
     fn _norm[_nelts: Int](ii: Int):
-        x.simd_store[_nelts](start + ii, x.simd_load[_nelts](start + ii) / ssum)
+        x.store[width=_nelts](start + ii, x.load[width=_nelts](start + ii) / ssum)
 
     vectorize[_norm, nelts](end - start)
 
@@ -595,15 +594,15 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
 fn batch_matmul[
     n: Int
 ](
-    C: StaticTuple[n, BufferPtrFloat32],
+    C: StaticTuple[BufferPtrFloat32, n],
     A: BufferPtrFloat32,
-    B: StaticTuple[n, BufferPtrFloat32],
+    B: StaticTuple[BufferPtrFloat32, n],
     rows: Int,
     cols: Int,
 ):
     @parameter
     fn compute_row(i: Int):
-        var tmp = StaticTuple[n, Accumulator[DType.float32, nelts]]()
+        var tmp = StaticTuple[Accumulator[DType.float32, nelts], n]()
 
         @unroll
         for k in range(n):
@@ -613,11 +612,11 @@ fn batch_matmul[
 
         @parameter
         fn dot[_nelts: Int](j: Int):
-            var a = A.simd_load[_nelts](j)
+            var a = A.load[width=_nelts](j)
 
             @unroll
             for k in range(n):
-                tmp[k].accumulate(a * B[k].simd_load[_nelts](row_offset + j))
+                tmp[k].accumulate(a * B[k].load[width=_nelts](row_offset + j))
 
         vectorize[dot, nelts](cols)
 
@@ -633,9 +632,9 @@ fn matmul(C: TensorF32, A: TensorF32, B: TensorF32) raises:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_dimension_checks(A.shape(), B.shape())
     batch_matmul[1](
-        StaticTuple[1, BufferPtrFloat32](C.data()),
+        StaticTuple[BufferPtrFloat32, 1](C.data()),
         A.data(),
-        StaticTuple[1, BufferPtrFloat32](B.data()),
+        StaticTuple[BufferPtrFloat32, 1](B.data()),
         B.dim(0),
         B.dim(1),
     )
@@ -646,9 +645,9 @@ fn matmul(C: TensorF32, A: TensorF32, B: TensorSlice) raises:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_dimension_checks(A.shape(), B.shape())
     batch_matmul[1](
-        StaticTuple[1, BufferPtrFloat32](C.data()),
+        StaticTuple[BufferPtrFloat32, 1](C.data()),
         A.data(),
-        StaticTuple[1, BufferPtrFloat32](B.data()),
+        StaticTuple[BufferPtrFloat32, 1](B.data()),
         B.dim(0),
         B.dim(1),
     )
@@ -659,11 +658,11 @@ fn matmul(C: TensorSlice, A: TensorF32, B: TensorSlice) raises:
     # B (d,n) @ A (n,) -> C (d,)
     matmul_dimension_checks(A.shape(), B.shape())
     batch_matmul[1](
-        StaticTuple[1, BufferPtrFloat32](
+        StaticTuple[BufferPtrFloat32, 1](
             C.data(),
         ),
         A.data(),
-        StaticTuple[1, BufferPtrFloat32](B.data()),
+        StaticTuple[BufferPtrFloat32, 1](B.data()),
         B.dim(0),
         B.dim(1),
     )
@@ -727,7 +726,7 @@ fn transformer(
 
     # Copy the token embedding into x
     var content_row = weights.token_embedding_table.data().offset(token * dim)
-    memcpy[DType.float32](state.x.data(), content_row, dim)
+    memcpy(state.x.data(), content_row, dim)
 
     # Pluck out the "pos" row of freq_cis_real and freq_cis_imag
     var freq_cis_real_row = TensorSlice(weights.freq_cis_real, pos)
@@ -743,11 +742,11 @@ fn transformer(
         state.v = TensorSlice(state.value_cache, l, pos)
         if kv_dim == dim:
             batch_matmul[3](
-                StaticTuple[3, BufferPtrFloat32](
+                StaticTuple[BufferPtrFloat32, 3](
                     state.q.data(), state.k.data(), state.v.data()
                 ),
                 state.xb.data(),
-                StaticTuple[3, BufferPtrFloat32](
+                StaticTuple[BufferPtrFloat32, 3](
                     TensorSlice(weights.wq, l).data(),
                     TensorSlice(weights.wk, l).data(),
                     TensorSlice(weights.wv, l).data(),
@@ -758,9 +757,9 @@ fn transformer(
         else:
             matmul(state.q, state.xb, TensorSlice(weights.wq, l))
             batch_matmul[2](
-                StaticTuple[2, BufferPtrFloat32](state.k.data(), state.v.data()),
+                StaticTuple[BufferPtrFloat32, 2](state.k.data(), state.v.data()),
                 state.xb.data(),
-                StaticTuple[2, BufferPtrFloat32](
+                StaticTuple[BufferPtrFloat32, 2](
                     TensorSlice(weights.wk, l).data(), TensorSlice(weights.wv, l).data()
                 ),
                 kv_dim,
@@ -791,8 +790,8 @@ fn transformer(
                 @parameter
                 fn score_fn[_nelts: Int](i: Int):
                     score += (
-                        state.q.simd_load[_nelts](q_offset + i)
-                        * state.key_cache.simd_load[_nelts](k_offset + i)
+                        state.q.load[width=_nelts](q_offset + i)
+                        * state.key_cache.load[width=_nelts](k_offset + i)
                     ).reduce_add()
 
                 vectorize[score_fn, nelts](head_size)
@@ -815,10 +814,10 @@ fn transformer(
 
                 @parameter
                 fn xb_accumulate[_nelts: Int](i: Int):
-                    var xbi = state.xb.simd_load[_nelts](
+                    var xbi = state.xb.load[width=_nelts](
                         xb_offset + i
-                    ) + a * state.value_cache.simd_load[_nelts](v_offset + i)
-                    state.xb.simd_store[_nelts](xb_offset + i, xbi)
+                    ) + a * state.value_cache.load[width=_nelts](v_offset + i)
+                    state.xb.store[width=_nelts](xb_offset + i, xbi)
 
                 vectorize[xb_accumulate, nelts](head_size)
 
@@ -832,9 +831,9 @@ fn transformer(
 
         # Calculate self.w1(x) and self.w3(x) for FFN
         batch_matmul[2](
-            StaticTuple[2, BufferPtrFloat32](state.hb.data(), state.hb2.data()),
+            StaticTuple[BufferPtrFloat32, 2](state.hb.data(), state.hb2.data()),
             state.xb.data(),
-            StaticTuple[2, BufferPtrFloat32](
+            StaticTuple[BufferPtrFloat32, 2](
                 TensorSlice(weights.w1, l).data(), TensorSlice(weights.w3, l).data()
             ),
             hidden_dim,
@@ -843,11 +842,11 @@ fn transformer(
 
         @parameter
         fn silu[_nelts: Int](i: Int):
-            var initial_hb = state.hb.simd_load[_nelts](i)
+            var initial_hb = state.hb.load[width=_nelts](i)
             # Apply SiLU activation function (silu(x) = x * sigmoid(x))
             var hbi = initial_hb * (1.0 / (1.0 + math.exp(-initial_hb)))
             # Elementwise multiply with w3(x)
-            state.hb.simd_store[_nelts](i, hbi * state.hb2.simd_load[_nelts](i))
+            state.hb.store[width=_nelts](i, hbi * state.hb2.load[width=_nelts](i))
 
         vectorize[silu, nelts](hidden_dim)
         # Final matrix multiplication to get the output of the FFN
@@ -887,14 +886,14 @@ fn sample(probabilities: TensorF32) -> Int:
     return n - 1  # In case of rounding errors
 
 
-fn bpe_encode(inout tokens: DynamicVector[Int], text: String, inout tok: Tokenizer):
+fn bpe_encode(inout tokens: List[Int], text: String, inout tok: Tokenizer):
     for pos in range(len(text)):
         var char = str_to_ptr(text[pos])
         var id = tok.find(char)
         if id == -1:
             print("Not a good prompt token at pos ", pos)
             return
-        tokens.push_back(id)
+        tokens.append(id)
 
     while True:
         var best_score = Float32(-1e10)
@@ -917,11 +916,11 @@ fn bpe_encode(inout tokens: DynamicVector[Int], text: String, inout tok: Tokeniz
         # Merge the consecutive pair (best_idx, best_idx+1) into new token best_id
         tokens[best_idx] = best_id
         # Delete token at position best_idx+1, shift the entire sequence back 1
-        var _tokens = DynamicVector[Int]()
+        var _tokens = List[Int]()
         for i in range(0, best_idx + 1):
-            _tokens.push_back(tokens[i])
+            _tokens.append(tokens[i])
         for i in range(best_idx + 2, len(tokens)):
-            _tokens.push_back(tokens[i])
+            _tokens.append(tokens[i])
         tokens = _tokens
 
 
@@ -937,12 +936,12 @@ fn print_str(s: PointerString):
     if (s[1].to_int() == ord("0")) and (s[2].to_int() == ord("x")):
         var d1: Int = s[3].to_int()
         var d2: Int = s[4].to_int()
-        print_no_newline(chr(str2num(d1) * 16 + str2num(d2)))
+        print(chr(str2num(d1) * 16 + str2num(d2)), end="")
         return
     # print all chars till null character
     var p: Int = 0
     while s[p].to_int() != 0:
-        print_no_newline(chr(s[p].to_int()))
+        print(chr(s[p].to_int()), end="")
         p += 1
 
 
@@ -1041,7 +1040,7 @@ fn main() raises:
     var state = RunState(config)
 
     # Process the prompt, if any
-    var prompt_tokens = DynamicVector[Int]()
+    var prompt_tokens = List[Int]()
 
     if prompt:
         bpe_encode(prompt_tokens, prompt, tok)
