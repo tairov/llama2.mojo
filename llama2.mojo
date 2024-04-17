@@ -107,10 +107,10 @@ struct TensorSlice:
     fn rank(self) -> Int:
         return self._shape.rank()
 
-    fn load[width: Int](self, idx: Int) -> SIMD[DType.float32, width]:
+    fn load[width=width: Int](self, idx: Int) -> SIMD[DType.float32, width]:
         return self._data.load[width=width](idx)
 
-    fn load[width: Int](self, *indices: Int) -> SIMD[DType.float32, width]:
+    fn load[width=width: Int](self, *indices: Int) -> SIMD[DType.float32, width]:
         if len(VariadicList(indices)) > 2:
             print(
                 "Warning: TensorSlice only supports 1D and 2D indexing.  Results are"
@@ -126,7 +126,7 @@ struct TensorSlice:
     fn __getitem__(self, idx: Int) -> SIMD[DType.float32, 1]:
         return self._data.load[width=1](idx)
 
-    fn load[width: Int](self, idx: Int, val: SIMD[DType.float32, width]):
+    fn load[width=width: Int](self, idx: Int, val: SIMD[DType.float32, width]):
         return self._data.load[width](idx, val)
 
     fn __setitem__(self, idx: Int, val: SIMD[DType.float32, 1]):
