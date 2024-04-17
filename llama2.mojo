@@ -46,8 +46,8 @@ struct Accumulator[T: DType, width: Int]:
     fn accumulate[_width: Int](inout self, val: SIMD[T, _width]) -> None:
         # This is a hack to make sure both SIMD have _width length.
         # SIMD[T, width] += SIMD[T, _width] is always an error.
-        var newVal = self.data.load[width=_width]() + val
-        self.data.store[width=_width](newVal)
+        var new_val = self.data.load[width=_width]() + val
+        self.data.store[width=_width](new_val)
 
     @always_inline
     fn total(self) -> SIMD[T, 1]:
@@ -370,14 +370,16 @@ struct Config:
     var shared_weights: Bool
 
     fn __init__(inout self, fileName: String, print_config: Bool) raises:
-        var f = open(fileName, "r")
-        # reading 7 vars of type DType.int32 from the file
-        var bytes_of_config_params = NUM_CONFIG_INT * sizeof[DType.int32]()
-        # config_data_raw id Tensor[DType.int8] with bytes_of_config_params elements
-        var config_data_raw = f.read_bytes(bytes_of_config_params)
-        f.close()
+        var bytes_of_config_params: Int
+        var config_data_raw: String
+        with open(fileName, "rb") as f:
+            # reading 7 vars of type DType.int32 from the file
+            bytes_of_config_params = NUM_CONFIG_INT * sizeof[DType.int32]()
+            # config_data_raw id Tensor[DType.int8] with bytes_of_config_params elements
+            config_data_raw = f.read(bytes_of_config_params)
+
         # correct Tensor type and shape for easy reading, without copying data
-        var int32_ptr = DTypePointer[DType.int8](config_data_raw.steal_data().value).bitcast[DType.int32]()
+        var int32_ptr = config_data_raw._steal_ptr().bitcast[DType.int32]()
         var config_data = Tensor[DType.int32](int32_ptr, NUM_CONFIG_INT)
         self.dim = config_data[0].to_int()
         self.hidden_dim = config_data[1].to_int()
@@ -451,43 +453,42 @@ struct TransformerWeights:
 
     fn __init__(inout self, file_name: String, config: Config) raises:
         var bytes_read = 0
-        var f = open(file_name, "r")
+        with open(file_name, "rb") as f:
+            # throw away config data
+            _ = f.read_bytes(NUM_CONFIG_INT * sizeof[DType.int32]())
+            bytes_read += NUM_CONFIG_INT * sizeof[DType.int32]()
 
-        # throw away config data
-        _ = f.read_bytes(NUM_CONFIG_INT * sizeof[DType.int32]())
-        bytes_read += NUM_CONFIG_INT * sizeof[DType.int32]()
+            @parameter
+            fn read_weights(*dims: Int) raises -> TensorF32:
+                var shape = TensorShape(dims)
+                # The created tensor takes a 1D shape equal to bytes read
+                # So we can't reshape to target shape because dims don't match
+                var tmp = f.read_bytes(shape.num_elements() * sizeof[DType.float32]())
+                bytes_read += shape.num_elements() * sizeof[DType.float32]()
+                var data = DTypePointer[DType.int8](tmp.steal_data().value).bitcast[DType.float32]()
 
-        @parameter
-        fn read_weights(*dims: Int) raises -> TensorF32:
-            var shape = TensorShape(dims)
-            # The created tensor takes a 1D shape equal to bytes read
-            # So we can't reshape to target shape because dims don't match
-            var tmp = f.read_bytes(shape.num_elements() * sizeof[DType.float32]())
-            bytes_read += shape.num_elements() * sizeof[DType.float32]()
-            var data = DTypePointer[DType.int8](tmp.steal_data().value).bitcast[DType.float32]()
+                return TensorF32(data, shape)
 
-            return TensorF32(data, shape)
+            self.token_embedding_table = read_weights(config.vocab_size, config.dim)
+            self.rms_att_weight = read_weights(config.n_layers, config.dim)
+            self.wq = read_weights(config.n_layers, config.dim, config.dim)
+            self.wk = read_weights(config.n_layers, config.kv_dim, config.dim)
+            self.wv = read_weights(config.n_layers, config.kv_dim, config.dim)
+            self.wo = read_weights(config.n_layers, config.dim, config.dim)
+            self.rms_ffn_weight = read_weights(config.n_layers, config.dim)
+            self.w1 = read_weights(config.n_layers, config.hidden_dim, config.dim)
+            self.w2 = read_weights(config.n_layers, config.dim, config.hidden_dim)
+            self.w3 = read_weights(config.n_layers, config.hidden_dim, config.dim)
+            self.rms_final_weight = read_weights(config.dim)
+            # maybe need modifying for different model
+            # config.head_size // 2 for stories and tinyllama-1.1
+            self.freq_cis_real = read_weights(config.seq_len, config.head_size // 2)
+            self.freq_cis_imag = read_weights(config.seq_len, config.head_size // 2)
+            if config.shared_weights:
+                self.wcls = self.token_embedding_table
+            else:
+                self.wcls = read_weights(config.vocab_size, config.dim)
 
-        self.token_embedding_table = read_weights(config.vocab_size, config.dim)
-        self.rms_att_weight = read_weights(config.n_layers, config.dim)
-        self.wq = read_weights(config.n_layers, config.dim, config.dim)
-        self.wk = read_weights(config.n_layers, config.kv_dim, config.dim)
-        self.wv = read_weights(config.n_layers, config.kv_dim, config.dim)
-        self.wo = read_weights(config.n_layers, config.dim, config.dim)
-        self.rms_ffn_weight = read_weights(config.n_layers, config.dim)
-        self.w1 = read_weights(config.n_layers, config.hidden_dim, config.dim)
-        self.w2 = read_weights(config.n_layers, config.dim, config.hidden_dim)
-        self.w3 = read_weights(config.n_layers, config.hidden_dim, config.dim)
-        self.rms_final_weight = read_weights(config.dim)
-        # maybe need modifying for different model
-        # config.head_size // 2 for stories and tinyllama-1.1
-        self.freq_cis_real = read_weights(config.seq_len, config.head_size // 2)
-        self.freq_cis_imag = read_weights(config.seq_len, config.head_size // 2)
-        if config.shared_weights:
-            self.wcls = self.token_embedding_table
-        else:
-            self.wcls = read_weights(config.vocab_size, config.dim)
-        f.close()
         print(
             "Total bytes read:",
             bytes_read,
