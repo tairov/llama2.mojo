@@ -878,7 +878,8 @@ fn sample(probabilities: TensorF32) -> Int:
     var n = probabilities.dim(0)
     # Sample index from probabilities, they must sum to 1
     # get random value within (min, max) float32 range
-    var r = rand[size=DType.float32](1)
+    var p1 = DTypePointer[DType.float32].alloc(1)
+    var r = rand[DType.float32](size=1, ptr=p1)
     var cdf: Float32 = 0.0
     for i in range(n):
         cdf += probabilities[i]
