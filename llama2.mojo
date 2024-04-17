@@ -127,7 +127,7 @@ struct TensorSlice:
         return self._data.load[width=1](idx)
 
     fn store[width: Int](self, idx: Int, val: SIMD[DType.float32, width]):
-        return self._data.load[width](idx, val)
+        return self._data.store[width=width](idx, val)
 
     fn __setitem__(self, idx: Int, val: SIMD[DType.float32, 1]):
         return self.store[width=1](idx, val)
