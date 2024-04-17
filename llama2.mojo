@@ -47,7 +47,7 @@ struct Accumulator[T: DType, width: Int]:
         # This is a hack to make sure both SIMD have _width length.
         # SIMD[T, width] += SIMD[T, _width] is always an error.
         var newVal = self.data.load[width=_width]() + val
-        self.data.load[width=_width](newVal)
+        self.data.store[width=_width](newVal)
 
     @always_inline
     fn total(self) -> SIMD[T, 1]:
@@ -126,11 +126,11 @@ struct TensorSlice:
     fn __getitem__(self, idx: Int) -> SIMD[DType.float32, 1]:
         return self._data.load[width=1](idx)
 
-    fn load[width=width: Int](self, idx: Int, val: SIMD[DType.float32, width]):
+    fn store[width=width: Int](self, idx: Int, val: SIMD[DType.float32, width]):
         return self._data.load[width](idx, val)
 
     fn __setitem__(self, idx: Int, val: SIMD[DType.float32, 1]):
-        return self.load[width=1](idx, val)
+        return self.store[width=1](idx, val)
 
 
 fn read_val_int(inout buf: FileBuf) raises -> Int:
@@ -514,7 +514,7 @@ fn accum(inout a: TensorF32, b: TensorF32) -> None:
 
     @parameter
     fn _acc[_width: Int](j: Int):
-        a.load[width=_width](j, a.load[width=_width](j) + b.load[width=_width](j))
+        a.store[width=_width](j, a.load[width=_width](j) + b.load[width=_width](j))
 
     vectorize[_acc, width](size)
 
@@ -540,7 +540,7 @@ fn rmsnorm(
     @parameter
     fn _norm[_width: Int](j: Int):
         var val = weight.load[width=_width](j) * ss * x.load[width=_width](j)
-        o.offset(j).load[width=_width](0, val)
+        o.offset(j).store[width=_width](0, val)
 
     vectorize[_norm, width](size)
 
@@ -577,7 +577,7 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
     @parameter
     fn _exp[_width: Int](ii: Int):
         var val = math.exp(x.load[width=_width](start + ii) - max_val)
-        x.load[width=_width](start + ii, val)
+        x.store[width=_width](start + ii, val)
         acc.accumulate(val)
 
     vectorize[_exp, width](end - start)
@@ -586,7 +586,7 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
 
     @parameter
     fn _norm[_width: Int](ii: Int):
-        x.load[width=_width](start + ii, x.load[width=_width](start + ii) / ssum)
+        x.store[width=_width](start + ii, x.load[width=_width](start + ii) / ssum)
 
     vectorize[_norm, width](end - start)
 
@@ -818,7 +818,7 @@ fn transformer(
                     var xbi = state.xb.load[width=_width](
                         xb_offset + i
                     ) + a * state.value_cache.load[width=_width](v_offset + i)
-                    state.xb.load[width=_width](xb_offset + i, xbi)
+                    state.xb.store[width=_width](xb_offset + i, xbi)
 
                 vectorize[xb_accumulate, width](head_size)
 
@@ -847,7 +847,7 @@ fn transformer(
             # Apply SiLU activation function (silu(x) = x * sigmoid(x))
             var hbi = initial_hb * (1.0 / (1.0 + math.exp(-initial_hb)))
             # Elementwise multiply with w3(x)
-            state.hb.load[width=_width](i, hbi * state.hb2.load[width=_width](i))
+            state.hb.store[width=_width](i, hbi * state.hb2.load[width=_width](i))
 
         vectorize[silu, width](hidden_dim)
         # Final matrix multiplication to get the output of the FFN
