@@ -371,15 +371,15 @@ struct Config:
 
     fn __init__(inout self, fileName: String, print_config: Bool) raises:
         var bytes_of_config_params: Int
-        var config_data_raw: String
+        var config_data_raw: List[Int8]
         with open(fileName, "rb") as f:
             # reading 7 vars of type DType.int32 from the file
             bytes_of_config_params = NUM_CONFIG_INT * sizeof[DType.int32]()
             # config_data_raw id Tensor[DType.int8] with bytes_of_config_params elements
-            config_data_raw = f.read(bytes_of_config_params)
+            config_data_raw = f.read_bytes(bytes_of_config_params)
 
         # correct Tensor type and shape for easy reading, without copying data
-        var int32_ptr = config_data_raw._steal_ptr().bitcast[DType.int32]()
+        var int32_ptr = DTypePointer[DType.int8](config_data_raw.steal_data().value).bitcast[DType.int32]()
         var config_data = Tensor[DType.int32](int32_ptr, NUM_CONFIG_INT)
         self.dim = config_data[0].to_int()
         self.hidden_dim = config_data[1].to_int()
