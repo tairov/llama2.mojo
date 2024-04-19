@@ -499,13 +499,13 @@ struct TransformerWeights:
 
 
 fn read_file(file_name: String, inout buf: FileBuf) raises:
-    var fd = open(file_name, "r")
-    var data = fd.read()
-    fd.close()
-    buf.size = data._buffer.size
-    buf.data = data._steal_ptr().bitcast[DType.uint8]()
+    var data: List[Int8]
+    with open(file_name, "rb") as f:
+        data = f.read_bytes()
+
+    buf.size = data.size
+    buf.data = DTypePointer[DType.int8](data.steal_data().value).bitcast[DType.uint8]()
     buf.offset = 0
-    return None
 
 
 @always_inline
