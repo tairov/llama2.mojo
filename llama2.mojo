@@ -22,10 +22,9 @@ var workers = 0
 
 alias nelts = (4 * simdwidthof[DType.float32]())
 
-alias PointerString = Pointer[UInt8]
 alias BufferPtrType = DTypePointer[DType.uint8]
 alias BufferPtrFloat32 = DTypePointer[DType.float32]
-alias PointerStrings = Pointer[PointerString]
+alias PointerStrings = Pointer[String]
 alias TensorF32 = Tensor[DType.float32]
 
 
@@ -150,56 +149,44 @@ fn read_val_float32(inout buf: FileBuf) raises -> Float32:
     return val
 
 
-fn read_val_str(inout buf: FileBuf, slen: Int) raises -> PointerString:
-    var str = PointerString.alloc(slen + 1)
-    for i in range(slen):
-        str.store(i, buf.data.load(buf.get_offset()))
-        buf.move_offset(1)
-    str.store(slen, 0)
-
+fn read_val_str(inout buf: FileBuf, slen: Int) raises -> String:
+    var str = List[Int8](capacity=slen + 1)
+    var dst = str.data
+    var src = buf.data.offset(buf.get_offset()).bitcast[DType.int8]()
+    memcpy(dst, src, slen)
+    buf.move_offset(slen)
+    str[slen] = 0
+    str.size = slen + 1
     return str
-
-
-fn str_len(s: PointerString) -> Int:
-    var len = 0
-    while s[len] != 0:
-        len += 1
-    return len
 
 
 # not optimal concat
-fn str_concat(s1: PointerString, s2: PointerString) -> PointerString:
-    var l1 = str_len(s1)
-    var l2 = str_len(s2)
-    var str = PointerString.alloc(l1 + l2 + 1)
-    memcpy(str, s1, l1)
-    memcpy(str.offset(l1), s2, l2)
-    str.store(l1 + l2, 0)
+fn str_concat(s1: String, s2: String) -> String:
+    var l1 = len(s1)
+    var l2 = len(s2)
+    var str = List[Int8](capacity=l1 + l2 + 1)
+    memcpy(str.data, s1._buffer.data, l1)
+    memcpy(str.data + l1, s2._buffer.data, l2)
+    str[l1 + l2] = 0
+    str.size = l1 + l2 + 1
+    _ = (s1, s2)
     return str
 
 
-fn str_to_ptr(s: String) -> PointerString:
-    var ret = PointerString.alloc(len(s) + 1)
-    for i in range(len(s)):
-        ret.store(i, ord(s[i]))
-    ret.store(len(s), 0)
-    return ret
-
-
-fn string_compare(a: PointerString, b: PointerString) -> Int:
+fn string_compare(a: String, b: String) -> Int:
     var index = 0
-    while a[index] != 0 and b[index] != 0:
-        if a[index] < b[index]:
+    while a._buffer[index] != 0 and b._buffer[index] != 0:
+        if a._buffer[index] < b._buffer[index]:
             return -1
-        if a[index] > b[index]:
+        if a._buffer[index] > b._buffer[index]:
             return 1
 
         index += 1
 
-    if a[index] != 0 and b[index] == 0:
+    if a._buffer[index] != 0 and b._buffer[index] == 0:
         return 1
 
-    if a[index] == 0 and b[index] != 0:
+    if a._buffer[index] == 0 and b._buffer[index] != 0:
         return -1
 
     return 0
@@ -207,7 +194,7 @@ fn string_compare(a: PointerString, b: PointerString) -> Int:
 
 # Quicksort helper function to find the partition position
 fn partition(
-    inout array: PointerStrings, inout indices: List[Int], low: Int, high: Int
+    inout array: List[String], inout indices: List[Int], low: Int, high: Int
 ) -> Int:
     var pivot = array[high]
     var ii = low - 1
@@ -215,27 +202,18 @@ fn partition(
         if string_compare(pivot, array[jj]) == 1:
             # If element smaller than pivot, swap
             ii = ii + 1
-
-            var tmp = array[ii]
-            var tmp_idx = indices[ii]
-            array.store(ii, array[jj])
-            indices[ii] = indices[jj]
-            array.store(jj, tmp)
-            indices[jj] = tmp_idx
+            array[ii], array[jj] = array[jj], array[ii]
+            indices[ii], indices[jj] = indices[jj], indices[ii]
 
     # Swap the pivot element
-    var tmp = array[ii + 1]
-    var tmp_idx = indices[ii + 1]
-    array.store(ii + 1, array[high])
-    indices[ii + 1] = indices[high]
-    array.store(high, tmp)
-    indices[high] = tmp_idx
+    array[ii + 1], array[high] = array[high], array[ii + 1]
+    indices[ii + 1], indices[high] = indices[high], indices[ii + 1]
 
     return ii + 1
 
 
 fn quicksort(
-    inout array: PointerStrings, inout indices: List[Int], low: Int, high: Int
+    inout array: List[String], inout indices: List[Int], low: Int, high: Int
 ):
     if low < high:
         var pi = partition(array, indices, low, high)
@@ -279,33 +257,33 @@ struct FileBuf:
         return self.offset
 
 
-fn wrap(token: PointerString) -> PointerString:
-    if string_compare(token, str_to_ptr("\\n")) == 0:
-        return str_to_ptr("<0x0A>")
-    if string_compare(token, str_to_ptr("\\t")) == 0:
-        return str_to_ptr("<0x09>")
-    if string_compare(token, str_to_ptr("'")) == 0:
-        return str_to_ptr("<0x27>")
-    elif string_compare(token, str_to_ptr('"')) == 0:
-        return str_to_ptr("<0x22>")
+fn wrap(token: String) -> String:
+    if string_compare(token, String("\\n")) == 0:
+        return String("<0x0A>")
+    if string_compare(token, String("\\t")) == 0:
+        return String("<0x09>")
+    if string_compare(token, String("'")) == 0:
+        return String("<0x27>")
+    elif string_compare(token, String('"')) == 0:
+        return String("<0x22>")
     return token
 
 
 struct Tokenizer:
-    var vocab: PointerStrings
+    var vocab: List[String]
     var vocab_scores: BufferPtrFloat32
     var max_token_length: Int
     var vocab_size: Int
-    var sorted_vocab: PointerStrings
+    var sorted_vocab: List[String]
     var sorted_indices: List[Int]
 
     fn __init__(inout self, vocab_size: Int, inout buf: FileBuf) raises -> None:
         self.vocab_size = vocab_size
         self.max_token_length = read_val_int(buf)
         self.vocab_scores = BufferPtrFloat32.alloc(self.vocab_size)
-        self.vocab = PointerStrings.alloc(self.vocab_size)
+        self.vocab = List[String](capacity=self.vocab_size)
         # lazy load sorted vocab
-        self.sorted_vocab = PointerStrings.alloc(0)
+        self.sorted_vocab = List[String]()
         self.sorted_indices = List[Int]()
 
         # read vocab_scores & vocab values (tokens)
@@ -314,28 +292,25 @@ struct Tokenizer:
             var slen = read_val_int(buf)
             var token = read_val_str(buf, slen)
             self.store_token(i, token, score)
+        self.vocab.size = self.vocab_size
         return None
 
     fn __del__(owned self):
-        for i in range(0, self.vocab_size):
-            self.vocab[i].free()
-        self.vocab.free()
         self.vocab_scores.free()
-        self.sorted_vocab.free()
 
     fn store_token(
-        inout self, index: Int, owned token: PointerString, score: Float32
+        inout self, index: Int, owned token: String, score: Float32
     ) -> None:
-        self.vocab_scores.store(index, score)
-        self.vocab.store(index, token)
+        self.vocab_scores[index] = score
+        self.vocab[index] = token
 
     # sort vocab by string_compare
     fn sort(inout self) -> None:
         if len(self.sorted_indices) < self.vocab_size:
             self.sorted_indices = List[Int](capacity=self.vocab_size)
-            self.sorted_vocab = PointerStrings.alloc(self.vocab_size)
+            self.sorted_vocab = List[String](capacity=self.vocab_size)
             for ii in range(self.vocab_size):
-                self.sorted_vocab.store(ii, self.vocab[ii])
+                self.sorted_vocab.append(self.vocab[ii])
                 self.sorted_indices.append(ii)
 
         var n = self.vocab_size
@@ -343,7 +318,7 @@ struct Tokenizer:
         return None
 
     # Binary search that returns -1 if string is not found
-    fn find(inout self, token_o: PointerString) -> Int:
+    fn find(inout self, token_o: String) -> Int:
         var token = wrap(token_o)
         var n = self.vocab_size
         if len(self.sorted_indices) < n:
@@ -914,7 +889,7 @@ fn sample(probabilities: TensorF32) -> Int:
 
 fn bpe_encode(inout tokens: List[Int], text: String, inout tok: Tokenizer):
     for pos in range(len(text)):
-        var char = str_to_ptr(text[pos])
+        var char = text[pos]
         var id = tok.find(char)
         if id == -1:
             print("Not a good prompt token at pos ", pos)
@@ -957,17 +932,17 @@ fn str2num(d: Int) -> Int:
     return d - ord("0")
 
 
-fn print_str(s: PointerString):
+fn print_str(s: String):
     # print raw byte like <0x0A>
-    if (s[1] == ord("0")) and (s[2] == ord("x")):
-        var d1: Int = int(s[3])
-        var d2: Int = int(s[4])
+    if (s._buffer[1] == ord("0")) and (s._buffer[2] == ord("x")):
+        var d1: Int = int(s._buffer[3])
+        var d2: Int = int(s._buffer[4])
         print(chr(str2num(d1) * 16 + str2num(d2)), end="")
         return
     # print all chars till null character
     var p: Int = 0
     while s[p] != 0:
-        print(chr(int(s[p])), end="")
+        print(chr(int(s._buffer[p])), end="")
         p += 1
 
 
@@ -1105,9 +1080,9 @@ fn main() raises:
             # Finish generating when EOS, BOS appear
             if next_token == 1 or next_token == 2:
                 break
-        var token_str: PointerString = tok.vocab[next_token]
-        if token == 1 and token_str[0] == ord(" "):
-            token_str = token_str.offset(1)
+        var token_str: String = tok.vocab[next_token]
+        if token == 1 and token_str._buffer[0] == ord(" "):
+            token_str = token_str[1:]
 
         print_str(token_str)
 
