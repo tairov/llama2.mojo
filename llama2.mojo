@@ -3,7 +3,7 @@ from algorithm import vectorize, parallelize
 from builtin import string
 from math import round
 from memory import memset_zero, memcpy, stack_allocation
-from memory.unsafe import DTypePointer, bitcast, AddressSpace
+from memory.unsafe import DTypePointer, bitcast
 from tensor import rand
 from sys.info import num_performance_cores
 from sys import argv
@@ -84,8 +84,8 @@ struct TensorSlice:
             # Compiler complains if _shape not defined
             self._shape = TensorShape(1)
             raise Error(
-                "Trying to slice a 1D Tensor by layer and row.  This requires a 3D"
-                " Tensor."
+                "Trying to slice a 1D Tensor by layer and row.  This requires a"
+                " 3D Tensor."
             )
         else:
             # Compiler complains if _shape not defined
@@ -113,13 +113,17 @@ struct TensorSlice:
     fn load[width: Int](self, *indices: Int) -> SIMD[DType.float32, nelts]:
         if len(VariadicList(indices)) > 2:
             print(
-                "Warning: TensorSlice only supports 1D and 2D indexing.  Results are"
-                " unlikely to be correct."
+                "Warning: TensorSlice only supports 1D and 2D indexing. "
+                " Results are unlikely to be correct."
             )
         return self.load[width=nelts](indices[0] * self._shape[1] + indices[1])
 
-    fn load[width: Int](self, indices: StaticIntTuple[2]) -> SIMD[DType.float32, nelts]:
-        return self._data.load[width=nelts](indices[0] * self._shape[1] + indices[1])
+    fn load[
+        width: Int
+    ](self, indices: StaticIntTuple[2]) -> SIMD[DType.float32, nelts]:
+        return self._data.load[width=nelts](
+            indices[0] * self._shape[1] + indices[1]
+        )
 
     fn __getitem__(self, idx: Int) -> SIMD[DType.float32, 1]:
         return self._data.load[width=1](idx)
@@ -136,7 +140,7 @@ fn read_val_int(inout buf: FileBuf) raises -> Int:
     var data = buf.data.offset(buf.get_offset()).bitcast[DType.int32]()
     var result = data.load(0)
     buf.move_offset(4)
-    return result.to_int()
+    return int(result)
 
 
 fn read_val_float32(inout buf: FileBuf) raises -> Float32:
@@ -257,7 +261,9 @@ struct FileBuf:
         if new_offset > self.size:
             raise Error("Resulting offset will be past the end of the FileBuf")
         if new_offset < 0:
-            raise Error("Resulting offset will be before the beginning of the FileBuf")
+            raise Error(
+                "Resulting offset will be before the beginning of the FileBuf"
+            )
         self.offset = new_offset
 
     fn bitcast_offset_f32(inout self, size: Int) raises -> BufferPtrFloat32:
@@ -377,15 +383,15 @@ struct Config:
         var config_data_raw = f.read_bytes(bytes_of_config_params)
         f.close()
         # correct Tensor type and shape for easy reading, without copying data
-        var int32_ptr = DTypePointer[DType.int8](config_data_raw.steal_data().value).bitcast[DType.int32]()
-        var config_data = Tensor[DType.int32](int32_ptr, NUM_CONFIG_INT)
-        self.dim = config_data[0].to_int()
-        self.hidden_dim = config_data[1].to_int()
-        self.n_layers = config_data[2].to_int()
-        self.n_heads = config_data[3].to_int()
-        self.n_kv_heads = config_data[4].to_int()
-        self.vocab_size = config_data[5].to_int()
-        self.seq_len = config_data[6].to_int()
+        var int32_ptr = config_data_raw.steal_data().bitcast[Int32]()
+        var config_data = Tensor(TensorShape(NUM_CONFIG_INT), int32_ptr)
+        self.dim = int(config_data[0])
+        self.hidden_dim = int(config_data[1])
+        self.n_layers = int(config_data[2])
+        self.n_heads = int(config_data[3])
+        self.n_kv_heads = int(config_data[4])
+        self.vocab_size = int(config_data[5])
+        self.seq_len = int(config_data[6])
         self.head_size = self.dim // self.n_heads
         self.kv_dim = (self.n_kv_heads * self.dim) // self.n_heads
         self.kv_mul = self.n_heads // self.n_kv_heads
@@ -425,8 +431,12 @@ struct RunState:
         self.q = TensorF32(config.dim)
         self.att = TensorF32(config.n_heads, config.seq_len)
         self.logits = TensorF32(config.vocab_size)
-        self.key_cache = TensorF32(config.n_layers, config.seq_len, config.kv_dim)
-        self.value_cache = TensorF32(config.n_layers, config.seq_len, config.kv_dim)
+        self.key_cache = TensorF32(
+            config.n_layers, config.seq_len, config.kv_dim
+        )
+        self.value_cache = TensorF32(
+            config.n_layers, config.seq_len, config.kv_dim
+        )
         # So their updates flow to the caches, k and v are slices with shared memory.
         # Initialize with placeholders. The real tensors reference layer and position during forward pass.
         self.k = TensorSlice(TensorF32(TensorShape(1, config.kv_dim)), 1)
@@ -462,11 +472,13 @@ struct TransformerWeights:
             var shape = TensorShape(dims)
             # The created tensor takes a 1D shape equal to bytes read
             # So we can't reshape to target shape because dims don't match
-            var tmp = f.read_bytes(shape.num_elements() * sizeof[DType.float32]())
+            var tmp = f.read_bytes(
+                shape.num_elements() * sizeof[DType.float32]()
+            )
             bytes_read += shape.num_elements() * sizeof[DType.float32]()
-            var data = DTypePointer[DType.int8](tmp.steal_data().value).bitcast[DType.float32]()
+            var data = tmp.steal_data().bitcast[Float32]()
 
-            return TensorF32(data, shape)
+            return TensorF32(shape, data)
 
         self.token_embedding_table = read_weights(config.vocab_size, config.dim)
         self.rms_att_weight = read_weights(config.n_layers, config.dim)
@@ -513,14 +525,19 @@ fn accum(inout a: TensorF32, b: TensorF32) -> None:
 
     @parameter
     fn _acc[_nelts: Int](j: Int):
-        a.store[width=_nelts](j, a.load[width=_nelts](j) + b.load[width=_nelts](j))
+        a.store[width=_nelts](
+            j, a.load[width=_nelts](j) + b.load[width=_nelts](j)
+        )
 
     vectorize[_acc, nelts](size)
 
 
 @always_inline
 fn rmsnorm(
-    inout o: BufferPtrFloat32, x: BufferPtrFloat32, weight: BufferPtrFloat32, size: Int
+    inout o: BufferPtrFloat32,
+    x: BufferPtrFloat32,
+    weight: BufferPtrFloat32,
+    size: Int,
 ) -> None:
     # Calculate sum of squares
     var tmp = Accumulator[DType.float32, nelts]()
@@ -585,7 +602,9 @@ fn softmax(inout x: TensorF32, start: Int, end: Int):
 
     @parameter
     fn _norm[_nelts: Int](ii: Int):
-        x.store[width=_nelts](start + ii, x.load[width=_nelts](start + ii) / ssum)
+        x.store[width=_nelts](
+            start + ii, x.load[width=_nelts](start + ii) / ssum
+        )
 
     vectorize[_norm, nelts](end - start)
 
@@ -671,7 +690,8 @@ fn matmul(C: TensorSlice, A: TensorF32, B: TensorSlice) raises:
 fn matmul_dimension_checks(a: TensorShape, b: TensorShape) raises:
     if a[0] != b[1]:
         raise Error(
-            "matmul dimension mismatch. A rows (dim 0) not equal to B columns (dim 1)"
+            "matmul dimension mismatch. A rows (dim 0) not equal to B columns"
+            " (dim 1)"
         )
     if b.rank() != 2:
         raise Error("matmul expects B to be a 2D matrix")
@@ -757,10 +777,13 @@ fn transformer(
         else:
             matmul(state.q, state.xb, TensorSlice(weights.wq, l))
             batch_matmul[2](
-                StaticTuple[BufferPtrFloat32, 2](state.k.data(), state.v.data()),
+                StaticTuple[BufferPtrFloat32, 2](
+                    state.k.data(), state.v.data()
+                ),
                 state.xb.data(),
                 StaticTuple[BufferPtrFloat32, 2](
-                    TensorSlice(weights.wk, l).data(), TensorSlice(weights.wv, l).data()
+                    TensorSlice(weights.wk, l).data(),
+                    TensorSlice(weights.wv, l).data(),
                 ),
                 kv_dim,
                 dim,
@@ -834,7 +857,8 @@ fn transformer(
             StaticTuple[BufferPtrFloat32, 2](state.hb.data(), state.hb2.data()),
             state.xb.data(),
             StaticTuple[BufferPtrFloat32, 2](
-                TensorSlice(weights.w1, l).data(), TensorSlice(weights.w3, l).data()
+                TensorSlice(weights.w1, l).data(),
+                TensorSlice(weights.w3, l).data(),
             ),
             hidden_dim,
             dim,
@@ -846,7 +870,9 @@ fn transformer(
             # Apply SiLU activation function (silu(x) = x * sigmoid(x))
             var hbi = initial_hb * (1.0 / (1.0 + math.exp(-initial_hb)))
             # Elementwise multiply with w3(x)
-            state.hb.store[width=_nelts](i, hbi * state.hb2.load[width=_nelts](i))
+            state.hb.store[width=_nelts](
+                i, hbi * state.hb2.load[width=_nelts](i)
+            )
 
         vectorize[silu, nelts](hidden_dim)
         # Final matrix multiplication to get the output of the FFN
@@ -933,15 +959,15 @@ fn str2num(d: Int) -> Int:
 
 fn print_str(s: PointerString):
     # print raw byte like <0x0A>
-    if (s[1].to_int() == ord("0")) and (s[2].to_int() == ord("x")):
-        var d1: Int = s[3].to_int()
-        var d2: Int = s[4].to_int()
+    if (s[1] == ord("0")) and (s[2] == ord("x")):
+        var d1: Int = int(s[3])
+        var d2: Int = int(s[4])
         print(chr(str2num(d1) * 16 + str2num(d2)), end="")
         return
     # print all chars till null character
     var p: Int = 0
-    while s[p].to_int() != 0:
-        print(chr(s[p].to_int()), end="")
+    while s[p] != 0:
+        print(chr(int(s[p])), end="")
         p += 1
 
 
@@ -953,13 +979,15 @@ fn time_in_ms() -> Int:
 fn print_usage():
     print("Usage: mojo llama2.mojo <checkpoint> [options]")
     print(
-        'Example: mojo llama2.mojo stories15M.bin -s 99 -n 256 -t 0.5 -i "Llama is an'
-        ' animal"'
+        'Example: mojo llama2.mojo stories15M.bin -s 99 -n 256 -t 0.5 -i "Llama'
+        ' is an animal"'
     )
     print("Options:")
     print("  -s <int>    random seed, default time.now()")
     print("  -t <float>  temperature in [0,1.0], default 1.0")
-    print("  -n <int>    number of steps to run for, default 256. 0 = max_seq_len")
+    print(
+        "  -n <int>    number of steps to run for, default 256. 0 = max_seq_len"
+    )
     print("  -i <string> input prompt")
     print("  -z          tokenizer path")
     print("  -j          number of workers to use, default num_cores()")
