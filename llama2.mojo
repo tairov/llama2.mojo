@@ -8,7 +8,7 @@ from tensor import rand
 from sys.info import num_performance_cores
 from sys import argv
 from tensor import Tensor, TensorShape, TensorSpec
-from collections.list import List
+from collections import List, Dict
 
 # The SIMD vector width.
 from sys.info import simdwidthof
@@ -53,6 +53,7 @@ struct Accumulator[T: DType, width: Int]:
         return self.data.load[width=width]().reduce_add()
 
 
+@value
 struct TensorSlice:
     # Provides a view into a tensor representing a 1D slice on its first or first 2 dimensions.
     # Same function signatures as Tensor but without owning the data.
@@ -134,32 +135,6 @@ struct TensorSlice:
         return self.store[1](idx, val)
 
 
-fn read_val_int(inout buf: FileBuf) raises -> Int:
-    # DTypePointer[DType.ui8](buf.data).bitcast[DType.ui8]()
-    var data = buf.data.offset(buf.get_offset()).bitcast[DType.int32]()
-    var result = data.load(0)
-    buf.move_offset(4)
-    return int(result)
-
-
-fn read_val_float32(inout buf: FileBuf) raises -> Float32:
-    # DTypePointer[DType.ui8](buf.data).bitcast[DType.ui8]()
-    var val = buf.data.offset(buf.get_offset()).bitcast[DType.float32]().load(0)
-    buf.move_offset(4)
-    return val
-
-
-fn read_val_str(inout buf: FileBuf, slen: Int) raises -> String:
-    var str = List[Int8](capacity=slen + 1)
-    var dst = str.data
-    var src = buf.data.offset(buf.get_offset()).bitcast[DType.int8]()
-    memcpy(dst, src, slen)
-    buf.move_offset(slen)
-    str[slen] = 0
-    str.size = slen + 1
-    return str
-
-
 # not optimal concat
 fn str_concat(s1: String, s2: String) -> String:
     var l1 = len(s1)
@@ -169,8 +144,7 @@ fn str_concat(s1: String, s2: String) -> String:
     memcpy(str.data + l1, s2._buffer.data, l2)
     str[l1 + l2] = 0
     str.size = l1 + l2 + 1
-    _ = (s1, s2)
-    return str
+    return str^
 
 
 fn string_compare(a: String, b: String) -> Int:
@@ -188,155 +162,77 @@ fn string_compare(a: String, b: String) -> Int:
 
     if a._buffer[index] == 0 and b._buffer[index] != 0:
         return -1
-
+    _ = (a, b)
     return 0
 
 
-# Quicksort helper function to find the partition position
-fn partition(
-    inout array: List[String], inout indices: List[Int], low: Int, high: Int
-) -> Int:
-    var pivot = array[high]
-    var ii = low - 1
-    for jj in range(low, high):
-        if string_compare(pivot, array[jj]) == 1:
-            # If element smaller than pivot, swap
-            ii = ii + 1
-            array[ii], array[jj] = array[jj], array[ii]
-            indices[ii], indices[jj] = indices[jj], indices[ii]
-
-    # Swap the pivot element
-    array[ii + 1], array[high] = array[high], array[ii + 1]
-    indices[ii + 1], indices[high] = indices[high], indices[ii + 1]
-
-    return ii + 1
-
-
-fn quicksort(
-    inout array: List[String], inout indices: List[Int], low: Int, high: Int
-):
-    if low < high:
-        var pi = partition(array, indices, low, high)
-        quicksort(array, indices, low, pi - 1)
-        quicksort(array, indices, pi + 1, high)
-
-
-struct FileBuf:
-    var data: BufferPtrType
-    var offset: Int
-    var size: Int
-
-    fn __init__(inout self):
-        self.data = BufferPtrType()
-        self.offset = 0
-        self.size = 0
-
-    fn __del__(owned self):
-        self.data.free()
-
-    fn move_offset(inout self, size: Int) raises:
-        var new_offset = self.offset + size
-        if new_offset > self.size:
-            raise Error("Resulting offset will be past the end of the FileBuf")
-        if new_offset < 0:
-            raise Error(
-                "Resulting offset will be before the beginning of the FileBuf"
-            )
-        self.offset = new_offset
-
-    fn bitcast_offset_f32(inout self, size: Int) raises -> BufferPtrFloat32:
-        var ret = self.data.offset(self.offset).bitcast[DType.float32]()
-        self.move_offset(size * sizeof[DType.float32]())
-        return ret
-
-    fn get_offset(self) raises -> Int:
-        if self.offset > self.size:
-            raise Error("Offset is past the end of the FileBuf")
-        if self.offset < 0:
-            raise Error("Offset is before the beginning of the FileBuf")
-        return self.offset
-
-
 fn wrap(token: String) -> String:
-    if string_compare(token, String("\\n")) == 0:
-        return String("<0x0A>")
-    if string_compare(token, String("\\t")) == 0:
-        return String("<0x09>")
-    if string_compare(token, String("'")) == 0:
-        return String("<0x27>")
-    elif string_compare(token, String('"')) == 0:
-        return String("<0x22>")
+    alias a = String("\\n")
+    alias b = String("\\t")
+    alias c = String("'")
+    alias d = String('"')
+    if token == a:
+        return String(List[Int8](0x0A, 0))
+    if token == b:
+        return String(List[Int8](0x09, 0))
+    if token == c:
+        return String(List[Int8](0x27, 0))
+    if token == d:
+        return String(List[Int8](0x22, 0))
+
     return token
 
 
+fn string_from_bytes(owned bytes: List[Int8]) -> String:
+    bytes.append(0)
+    return bytes^
+
+
+@value
 struct Tokenizer:
     var vocab: List[String]
-    var vocab_scores: BufferPtrFloat32
+    var vocab_scores: List[Float32]
     var max_token_length: Int
     var vocab_size: Int
-    var sorted_vocab: List[String]
-    var sorted_indices: List[Int]
+    var map_vocab_to_index: Dict[String, Int]
 
-    fn __init__(inout self, vocab_size: Int, inout buf: FileBuf) raises -> None:
-        self.vocab_size = vocab_size
-        self.max_token_length = read_val_int(buf)
-        self.vocab_scores = BufferPtrFloat32.alloc(self.vocab_size)
-        self.vocab = List[String](capacity=self.vocab_size)
-        # lazy load sorted vocab
-        self.sorted_vocab = List[String]()
-        self.sorted_indices = List[Int]()
+    fn __init__(inout self, vocab_size: Int, filename: String) raises:
+        with open(filename, "rb") as f:
 
-        # read vocab_scores & vocab values (tokens)
-        for i in range(0, self.vocab_size):
-            var score = read_val_float32(buf)
-            var slen = read_val_int(buf)
-            var token = read_val_str(buf, slen)
-            self.store_token(i, token, score)
-        self.vocab.size = self.vocab_size
-        return None
+            @parameter
+            fn read_bytes_as[dtype: DType](size: Int) raises -> SIMD[dtype, 1]:
+                # a List that keeps ownership of the pointer
+                var bytes = f.read_bytes(size)
+                # copy one element of new type after casting pointer
+                var result = bytes.data.bitcast[SIMD[dtype, 1]]()[0]
+                # orginal List and data can be destroyed
+                _ = bytes
+                return result
 
-    fn __del__(owned self):
-        self.vocab_scores.free()
+            self.vocab_size = vocab_size
+            self.vocab_scores = List[Float32](capacity=self.vocab_size)
+            self.vocab = List[String](capacity=self.vocab_size)
+            self.map_vocab_to_index = Dict[String, Int]()
+            self.max_token_length = int(read_bytes_as[DType.int32](4))
 
-    fn store_token(
-        inout self, index: Int, owned token: String, score: Float32
-    ) -> None:
-        self.vocab_scores[index] = score
-        self.vocab[index] = token
+            # read vocab_scores & vocab values (tokens)
+            for i in range(self.vocab_size):
+                var score = read_bytes_as[DType.float32](4)
+                var slen = int(read_bytes_as[DType.int32](4))
+                var token = string_from_bytes(f.read_bytes(slen))
+                self.vocab.append(token^)
+                self.vocab_scores.append(score)
+                self.map_vocab_to_index[self.vocab[i]] = i
 
-    # sort vocab by string_compare
-    fn sort(inout self) -> None:
-        if len(self.sorted_indices) < self.vocab_size:
-            self.sorted_indices = List[Int](capacity=self.vocab_size)
-            self.sorted_vocab = List[String](capacity=self.vocab_size)
-            for ii in range(self.vocab_size):
-                self.sorted_vocab.append(self.vocab[ii])
-                self.sorted_indices.append(ii)
-
-        var n = self.vocab_size
-        quicksort(self.sorted_vocab, self.sorted_indices, 0, n - 1)
-        return None
-
-    # Binary search that returns -1 if string is not found
-    fn find(inout self, token_o: String) -> Int:
+    fn find(self, token_o: String) -> Int:
         var token = wrap(token_o)
-        var n = self.vocab_size
-        if len(self.sorted_indices) < n:
-            self.sort()
-        var left = 0
-        var right = n - 1
-        while left <= right:
-            var mid = left + (right - left) // 2
-            var comparison = string_compare(self.sorted_vocab[mid], token)
-            if comparison == 0:
-                return self.sorted_indices[mid]
-            if comparison < 0:
-                left = mid + 1
-            else:
-                right = mid - 1
+        var index = self.map_vocab_to_index.find(token)
+        if index:
+            return index.value()
         return -1
 
 
+@value
 struct Config:
     var dim: Int
     var kv_dim: Int
@@ -383,6 +279,7 @@ struct Config:
             print("config: kv_dim, kv_mul", self.kv_dim, self.kv_mul)
 
 
+@value
 struct RunState:
     var x: TensorF32  # activation at current time stamp (dim,)
     var xb: TensorF32  # same, but inside a residual branch (dim,)
@@ -418,6 +315,7 @@ struct RunState:
         self.v = TensorSlice(TensorF32(TensorShape(1, config.kv_dim)), 1)
 
 
+@value
 struct TransformerWeights:
     var token_embedding_table: TensorF32
     var freq_cis_real: TensorF32
@@ -482,29 +380,6 @@ struct TransformerWeights:
             bytes_read // 1024 // 1024,
             "MB",
         )
-
-
-fn read_file(file_name: String, inout buf: FileBuf) raises:
-    var fd = open(file_name, "r")
-    var data = fd.read()
-    fd.close()
-    buf.size = data._buffer.size
-    buf.data = data._steal_ptr().bitcast[DType.uint8]()
-    buf.offset = 0
-    return None
-
-
-@always_inline
-fn accum(inout a: TensorF32, b: TensorF32) -> None:
-    var size = a.dim(0)
-
-    @parameter
-    fn _acc[_nelts: Int](j: Int):
-        a.store[width=_nelts](
-            j, a.load[width=_nelts](j) + b.load[width=_nelts](j)
-        )
-
-    vectorize[_acc, nelts](size)
 
 
 @always_inline
@@ -823,7 +698,7 @@ fn transformer(
         # Final matrix multiplication to get the output of the attention
         matmul(state.xb2, state.xb, TensorSlice(weights.wo, l))
         # Residual connection back into x
-        accum(state.x, state.xb2)
+        state.x = state.x + state.xb2
         # FFN rmsnorm
         rmsnorm(state.xb, state.x, TensorSlice(weights.rms_ffn_weight, l))
 
@@ -854,24 +729,13 @@ fn transformer(
         matmul(state.xb, state.hb, TensorSlice(weights.w2, l))
 
         # Residual connection
-        accum(state.x, state.xb)
+        state.x = state.x + state.xb
 
     # Final rmsnorm
     rmsnorm(state.x, state.x, weights.rms_final_weight)
 
     # Classifier into logits
     matmul(state.logits, state.x, weights.wcls)
-
-
-fn argmax(v: TensorF32) -> Int:
-    # return argmax of v
-    var max_i: Int = 0
-    var max_p: Float32 = v[0]
-    for i in range(v.dim(0)):
-        if v[i] > max_p:
-            max_i = i
-            max_p = v[i]
-    return max_i
 
 
 fn sample(probabilities: TensorF32) -> Int:
@@ -887,7 +751,7 @@ fn sample(probabilities: TensorF32) -> Int:
     return n - 1  # In case of rounding errors
 
 
-fn bpe_encode(inout tokens: List[Int], text: String, inout tok: Tokenizer):
+fn bpe_encode(inout tokens: List[Int], text: String, tok: Tokenizer):
     for pos in range(len(text)):
         var char = text[pos]
         var id = tok.find(char)
@@ -905,8 +769,8 @@ fn bpe_encode(inout tokens: List[Int], text: String, inout tok: Tokenizer):
             # Check if we can merge the pair (tokens[i], tokens[i+1])
             var str = str_concat(tok.vocab[tokens[i]], tok.vocab[tokens[i + 1]])
             var id = tok.find(str)
-            if id != -1 and tok.vocab_scores.load(id) > best_score:
-                best_score = tok.vocab_scores.load(id)
+            if id != -1 and tok.vocab_scores[id] > best_score:
+                best_score = tok.vocab_scores[id]
                 best_id = id
                 best_idx = i
 
@@ -922,28 +786,7 @@ fn bpe_encode(inout tokens: List[Int], text: String, inout tok: Tokenizer):
             _tokens.append(tokens[i])
         for i in range(best_idx + 2, len(tokens)):
             _tokens.append(tokens[i])
-        tokens = _tokens
-
-
-fn str2num(d: Int) -> Int:
-    # covert Hex to decimal
-    if d >= ord("A"):
-        return d - ord("A") + 10
-    return d - ord("0")
-
-
-fn print_str(s: String):
-    # print raw byte like <0x0A>
-    if (s._buffer[1] == ord("0")) and (s._buffer[2] == ord("x")):
-        var d1: Int = int(s._buffer[3])
-        var d2: Int = int(s._buffer[4])
-        print(chr(str2num(d1) * 16 + str2num(d2)), end="")
-        return
-    # print all chars till null character
-    var p: Int = 0
-    while s[p] != 0:
-        print(chr(int(s._buffer[p])), end="")
-        p += 1
+        tokens = _tokens^
 
 
 fn time_in_ms() -> Int:
@@ -1027,10 +870,7 @@ fn main() raises:
     if steps <= 0 or steps > config.seq_len:
         steps = config.seq_len
 
-    # Read in the tokenizer.bin file
-    var tbuf = FileBuf()
-    read_file(tokenizer, tbuf)
-    var tok = Tokenizer(config.vocab_size, tbuf)
+    var tok = Tokenizer(config.vocab_size, tokenizer)
 
     print(
         "n layers:",
@@ -1066,7 +906,7 @@ fn main() raises:
             # Sample the next token
             if temperature == 0.0:
                 # Greedy argmax sampling: take the token with the highest probability
-                next_token = argmax(state.logits)
+                next_token = int(state.logits.argmax()[0])
             else:
                 # Apply the temperature to the logits
                 for q in range(config.vocab_size):
@@ -1084,7 +924,7 @@ fn main() raises:
         if token == 1 and token_str._buffer[0] == ord(" "):
             token_str = token_str[1:]
 
-        print_str(token_str)
+        print(token_str, end="")
 
         # Advance forward
         token = next_token
