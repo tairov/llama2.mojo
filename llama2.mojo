@@ -136,7 +136,7 @@ fn read_val_int(inout buf: FileBuf) raises -> Int:
     var data = buf.data.offset(buf.get_offset()).bitcast[DType.int32]()
     var result = data.load(0)
     buf.move_offset(4)
-    return result.to_int()
+    return int(result)
 
 
 fn read_val_float32(inout buf: FileBuf) raises -> Float32:
@@ -377,15 +377,15 @@ struct Config:
         var config_data_raw = f.read_bytes(bytes_of_config_params)
         f.close()
         # correct Tensor type and shape for easy reading, without copying data
-        var int32_ptr = DTypePointer[DType.int8](config_data_raw.steal_data().value).bitcast[DType.int32]()
-        var config_data = Tensor[DType.int32](int32_ptr, NUM_CONFIG_INT)
-        self.dim = config_data[0].to_int()
-        self.hidden_dim = config_data[1].to_int()
-        self.n_layers = config_data[2].to_int()
-        self.n_heads = config_data[3].to_int()
-        self.n_kv_heads = config_data[4].to_int()
-        self.vocab_size = config_data[5].to_int()
-        self.seq_len = config_data[6].to_int()
+        var int32_ptr = DTypePointer[DType.int8](config_data_raw.steal_data()).bitcast[DType.int32]()
+        var config_data = Tensor[DType.int32](NUM_CONFIG_INT, int32_ptr)
+        self.dim = int(config_data[0])
+        self.hidden_dim = int(config_data[1])
+        self.n_layers = int(config_data[2])
+        self.n_heads = int(config_data[3])
+        self.n_kv_heads = int(config_data[4])
+        self.vocab_size = int(config_data[5])
+        self.seq_len = int(config_data[6])
         self.head_size = self.dim // self.n_heads
         self.kv_dim = (self.n_kv_heads * self.dim) // self.n_heads
         self.kv_mul = self.n_heads // self.n_kv_heads
@@ -464,9 +464,9 @@ struct TransformerWeights:
             # So we can't reshape to target shape because dims don't match
             var tmp = f.read_bytes(shape.num_elements() * sizeof[DType.float32]())
             bytes_read += shape.num_elements() * sizeof[DType.float32]()
-            var data = DTypePointer[DType.int8](tmp.steal_data().value).bitcast[DType.float32]()
+            var data = DTypePointer[DType.int8](tmp.steal_data()).bitcast[DType.float32]()
 
-            return TensorF32(data, shape)
+            return TensorF32(shape, data)
 
         self.token_embedding_table = read_weights(config.vocab_size, config.dim)
         self.rms_att_weight = read_weights(config.n_layers, config.dim)
@@ -933,15 +933,15 @@ fn str2num(d: Int) -> Int:
 
 fn print_str(s: PointerString):
     # print raw byte like <0x0A>
-    if (s[1].to_int() == ord("0")) and (s[2].to_int() == ord("x")):
-        var d1: Int = s[3].to_int()
-        var d2: Int = s[4].to_int()
+    if (int(s[1]) == ord("0")) and (int(s[2]) == ord("x")):
+        var d1: Int = int(s[3])
+        var d2: Int = int(s[4])
         print(chr(str2num(d1) * 16 + str2num(d2)), end="")
         return
     # print all chars till null character
     var p: Int = 0
-    while s[p].to_int() != 0:
-        print(chr(s[p].to_int()), end="")
+    while int(s[p]) != 0:
+        print(chr(int(s[p])), end="")
         p += 1
 
 
