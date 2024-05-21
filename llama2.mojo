@@ -228,7 +228,7 @@ struct Tokenizer:
         var token = wrap(token_o)
         var index = self.map_vocab_to_index.find(token)
         if index:
-            return index.value()
+            return index.value()[]
         return -1
 
 
