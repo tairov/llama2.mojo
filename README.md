@@ -133,6 +133,15 @@ readers to easily find the latest updates and extensions to the project.
 model, and applications of the `mojo` programming language. Citing the project helps growth of the knowledge community
 around these topics. We appreciate your support through referencing `llama2.mojo`!
 
+## in research & industry
+
+Our project has been used in academic. If you’ve published a paper or article that uses this project, please send a PR, so we can feature it here
+* https://arxiv.org/abs/2410.17736 - MojoBench: Language Modeling and Benchmarks for Mojo
+* https://arxiv.org/abs/2505.04080 - MojoFrame: Dataframe Library in Mojo Language
+* https://ieeexplore.ieee.org/abstract/document/10883176/metrics - A Comprehensive Review of Mojo: A High-Performance Programming Language
+* https://arxiv.org/abs/2502.01651 - Fine-tuning LLaMA 2 interference: a comparative study of language implementations for optimal efficiency
+
+
 ## play with Tinyllama-1.1B-Chat-v0.2
 
 The [TinyLlama](https://github.com/jzhang38/TinyLlama) is a 1.1B Llama model trained on 3 trillion tokens. This
@@ -193,3 +202,5 @@ This function takes an integer n as a parameter and returns the next Fibonacci n
 ## license
 
 MIT
+
+
