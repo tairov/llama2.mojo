@@ -6,7 +6,9 @@
 
 Have you ever wanted to inference a baby Llama 2 model in pure Mojo? No? Well, now you can!
 
-supported version: [Mojo 24.3](https://docs.modular.com/mojo/changelog#v243-2024-05-02)
+**supported version**: [Mojo 0.25.7.0](https://docs.modular.com/mojo/changelog/#v0257-nightly)
+> Note !!! On the latest versions of the Mojo compiler, performance appears to have degraded significantly. We're no longer seeing the same numbers as before. We're still investigating whether this is due to issues in our code or an underlying change in the compiler itself
+
 
 With the release of [Mojo](https://www.modular.com/blog/mojo-its-finally-here), I was inspired to take my Python port
 of [llama2.py](https://github.com/tairov/llama2.py) and transition it to Mojo. The result? A version that leverages
@@ -80,36 +82,21 @@ wget https://huggingface.co/karpathy/tinyllamas/resolve/main/stories15M.bin
 Then, just run the Mojo
 
 ```bash
-mojo llama2.mojo stories15M.bin -s 100 -n 256 -t 0.5 -i "Mojo is a language"
+mojo llama2.mojo stories15M.bin -s 100 -n 256 -t 0.5 -i "Once upon a time"
 ```
 
 **example output**
 
 ```
-num hardware threads:  6
-SIMD vector width:  16
-checkpoint size:  60816028 [ 57 MB ]
-n layers:  6
-vocab size:  32000
-Mojo is a language that people like to talk. Hephones are very different from other people. He has a big book with many pictures and words. He likes to look at the pictures and learn new things.
-One day, Mojo was playing with his friends in the park. They were running and laughing and having fun. Mojo told them about his book and his friends. They listened and looked at the pictures. Then, they saw a picture of a big, scary monster. They were very scared and ran away.
-Mojo was sad that his book was gone. He told his friends about the monster and they all felt very sad. Mojo's friends tried to make him feel better, but nothing worked. Mojo never learned his language again.
-achieved tok/s:  440.21739130434781
+num parallel workers: 4  SIMD width: 16
+Total bytes read: 60816028 Estimated checkpoint size:  57 MB
+n layers: 6 | vocab size: 32000
+Once upon a time, there was a little girl named Lily. She loved to play with her toys and her friends. One day, Lily's mom asked her to help make dinner. Lily was happy to help and got out the plates and forks.
+While they were cooking, Lily's mom asked her to help clean the kitchen. Lily was happy to help and started to pick up the plates. Suddenly, she saw a shiny knife on the counter. She picked it up and showed it to her mom.
+"Be careful with that knife, Lily. It's sharp and can hurt you," her mom warned.
+Lily was careful and put the knife away. She finished cooking and felt proud of herself. Her mom hugged her and said, "You are such a good helper, Lily. Thank you for helping me."
+achieved tok/s:  148.95267649340573
 ```
-
-## running via Docker
-
-```bash
-docker build --build-arg AUTH_KEY=<your-modular-auth-key> -t llama2.mojo .
-docker run -it llama2.mojo
-```
-
-With Gradio UI:
-
-```bash
-# uncomment the last line in Dockerfile CMD ["python", "gradio_app.py"]
-docker run -it -p 0.0.0.0:7860:7860 llama2.mojo
-``` 
 
 ## citing llama2.🔥
 
