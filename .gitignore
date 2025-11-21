@@ -32,3 +32,4 @@ output.txt
 *.so
 *.dylib
 
+*.trace

@@ -137,26 +137,6 @@ struct Matrix(Movable):
     fn num_elements(self) -> Int:
         return self.size()
 
-@register_passable("trivial")
-struct Accumulator[width: Int = nelts](Copyable):
-    # ideally this could be SIMD[T, width] but the width
-    # in accumulate() method is compared by identity
-    var data: BufferPtrFloat32
-
-    @always_inline
-    fn __init__(out self):
-        self.data = alloc[Float32](width)
-        memset_zero(self.data, width)
-
-    @always_inline
-    fn accumulate[_width: Int](mut self, val: SIMD[DType.float32, _width]) -> None:
-        var tmp = self.data.load[width=_width]() + val
-        self.data.store[width=_width](0, tmp)
-
-    @always_inline
-    fn total(self) -> SIMD[DType.float32, 1]:
-        return self.data.load[width=width]().reduce_add()
-
 fn str_concat(s1: String, s2: String) -> String:
     return s1 + s2
 
@@ -380,15 +360,18 @@ fn rmsnorm(
     size: Int
 ):
     # Calculate sum of squares
-    var tmp = Accumulator[nelts]()
+    var tmp_ptr = stack_allocation[nelts, Float32]()
+    tmp_ptr.store[width=nelts](0, SIMD[DType.float32, nelts](0))
 
     @parameter
     fn _sum2[_nelts: Int](j: Int):
-        tmp.accumulate[_nelts](x.offset(j).load[width=_nelts](0) ** 2)
+        var val = x.offset(j).load[width=_nelts](0) ** 2
+        var curr = tmp_ptr.load[width=_nelts](0)
+        tmp_ptr.store[width=_nelts](0, curr + val)
 
     vectorize[_sum2, nelts](size)
 
-    var ss: Float32 = tmp.total()
+    var ss: Float32 = tmp_ptr.load[width=nelts](0).reduce_add()
     ss = ss / size + 1e-5
     ss = 1.0 / math.sqrt(ss)
 
@@ -416,17 +399,19 @@ fn softmax(mut x: BufferPtrFloat32, start: Int, end: Int):
 
     vectorize[_max, nelts](end - start)
 
-    var acc = Accumulator[nelts]()
+    var acc_ptr = stack_allocation[nelts, Float32]()
+    acc_ptr.store[width=nelts](0, SIMD[DType.float32, nelts](0))
 
     @parameter
     fn _exp[_nelts: Int](ii: Int):
         var val = math.exp(x.load[width=_nelts](start + ii) - max_val)
         x.store[width=_nelts](start + ii, val)
-        acc.accumulate(val)
+        var curr = acc_ptr.load[width=_nelts](0)
+        acc_ptr.store[width=_nelts](0, curr + val)
 
     vectorize[_exp, nelts](end - start)
 
-    var ssum = acc.total()
+    var ssum = acc_ptr.load[width=nelts](0).reduce_add()
 
     @parameter
     fn _norm[_nelts: Int](ii: Int):
@@ -448,11 +433,11 @@ fn batch_matmul[
 ):
     @parameter
     fn compute_row(i: Int):
-        var tmp = StaticTuple[Accumulator[nelts], n]()
+        var tmp_ptr = stack_allocation[n * nelts, Float32]()
         
         @parameter
         for k in range(n):
-            tmp[k] = Accumulator[nelts]()
+            tmp_ptr.store[width=nelts](k * nelts, SIMD[DType.float32, nelts](0))
 
         var row_offset = i * cols
 
@@ -462,13 +447,15 @@ fn batch_matmul[
 
             @parameter
             for k in range(n):
-                tmp[k].accumulate(a * B[k].offset(row_offset + j).load[width=_nelts](0))
+                var val = a * B[k].offset(row_offset + j).load[width=_nelts](0)
+                var curr = tmp_ptr.load[width=_nelts](k * nelts)
+                tmp_ptr.store[width=_nelts](k * nelts, curr + val)
 
         vectorize[dot, nelts](cols)
 
         @parameter
         for k in range(n):
-            C[k].store(i, tmp[k].total())
+            C[k].store(i, tmp_ptr.load[width=nelts](k * nelts).reduce_add())
 
     parallelize[compute_row](rows, WORKERS)
 

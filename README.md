@@ -7,7 +7,6 @@
 Have you ever wanted to inference a baby Llama 2 model in pure Mojo? No? Well, now you can!
 
 **supported version**: [Mojo 0.25.7.0](https://docs.modular.com/mojo/changelog/#v0257-nightly)
-> Note !!! On the latest versions of the Mojo compiler, performance appears to have degraded significantly. We're no longer seeing the same numbers as before. We're still investigating whether this is due to issues in our code or an underlying change in the compiler itself
 
 
 With the release of [Mojo](https://www.modular.com/blog/mojo-its-finally-here), I was inspired to take my Python port
