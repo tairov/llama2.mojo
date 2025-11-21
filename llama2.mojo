@@ -6,14 +6,14 @@ from utils import StaticTuple
 from sys import argv
 from sys.param_env import env_get_int
 from sys.terminate import exit
-from sys.info import simd_width_of, size_of
+from sys.info import simd_width_of, size_of, num_performance_cores
 import math
 import os
 import random
 import time
 
 alias NUM_CONFIG_INT = 7
-alias WORKERS: Int = env_get_int["THREADS", 4]()
+
 alias nelts = (4 * simd_width_of[Float32]())
 alias BufferPtrFloat32 = UnsafePointer[Float32, MutOrigin.external]
 
@@ -430,6 +430,7 @@ fn batch_matmul[
     B: StaticTuple[BufferPtrFloat32, n],
     rows: Int,
     cols: Int,
+    workers: Int,
 ):
     @parameter
     fn compute_row(i: Int):
@@ -457,16 +458,17 @@ fn batch_matmul[
         for k in range(n):
             C[k].store(i, tmp_ptr.load[width=nelts](k * nelts).reduce_add())
 
-    parallelize[compute_row](rows, WORKERS)
+    parallelize[compute_row](rows, workers)
 
 @always_inline
-fn matmul(C: BufferPtrFloat32, A: BufferPtrFloat32, B: BufferPtrFloat32, rows: Int, cols: Int) raises:
+fn matmul(C: BufferPtrFloat32, A: BufferPtrFloat32, B: BufferPtrFloat32, rows: Int, cols: Int, workers: Int) raises:
     batch_matmul[1](
         StaticTuple[BufferPtrFloat32, 1](C),
         A,
         StaticTuple[BufferPtrFloat32, 1](B),
         rows,
         cols,
+        workers,
     )
 
 @always_inline
@@ -478,184 +480,195 @@ fn add(dest: BufferPtrFloat32, src: BufferPtrFloat32, size: Int):
         dest.store[width=_nelts](i, a + b)
     vectorize[add_kernel, nelts](size)
 
-@always_inline
-fn rope_rotation_llama(
-    q_ptr: BufferPtrFloat32,
-    k_ptr: BufferPtrFloat32,
-    freq_cis_real_row: BufferPtrFloat32,
-    freq_cis_imag_row: BufferPtrFloat32,
-    config: Config,
-    head_size: Int
-):
-    @parameter
-    fn head_loop(i: Int):
-        for j in range(0, head_size, 2):
-            var fcr = freq_cis_real_row[j // 2]
-            var fci = freq_cis_imag_row[j // 2]
+struct Transformer:
+    var workers: Int
+
+    fn __init__(out self, workers: Int = num_performance_cores()):
+        self.workers = workers
+
+    @always_inline
+    fn rope_rotation_llama(
+        self,
+        q_ptr: BufferPtrFloat32,
+        k_ptr: BufferPtrFloat32,
+        freq_cis_real_row: BufferPtrFloat32,
+        freq_cis_imag_row: BufferPtrFloat32,
+        config: Config,
+        head_size: Int
+    ):
+        @parameter
+        fn head_loop(i: Int):
+            for j in range(0, head_size, 2):
+                var fcr = freq_cis_real_row[j // 2]
+                var fci = freq_cis_imag_row[j // 2]
+                
+                # q rotation
+                var q_idx = i * head_size + j
+                var q0 = q_ptr[q_idx]
+                var q1 = q_ptr[q_idx + 1]
+                q_ptr[q_idx] = q0 * fcr - q1 * fci
+                q_ptr[q_idx + 1] = q0 * fci + q1 * fcr
+                
+                # k rotation
+                if i < config.n_kv_heads:
+                    var k_idx = i * head_size + j
+                    var k0 = k_ptr[k_idx]
+                    var k1 = k_ptr[k_idx + 1]
+                    k_ptr[k_idx] = k0 * fcr - k1 * fci
+                    k_ptr[k_idx + 1] = k0 * fci + k1 * fcr
+
+        parallelize[head_loop](config.n_heads, self.workers)
+
+    @always_inline
+    fn transformer(
+        self,
+        token: Int,
+        pos: Int,
+        config: Config,
+        mut state: RunState,
+        weights: TransformerWeights,
+    ) raises:
+        var dim = config.dim
+        var hidden_dim = config.hidden_dim
+        var head_size = config.head_size
+        var kv_dim = config.kv_dim
+        var kv_mul = config.kv_mul
+        var sqrt_head_size = math.sqrt[dtype=DType.float32, width=1](Float32(head_size))
+
+        # Copy the token embedding into x
+        var content_row = weights.token_embedding_table.slice(token) # returns pointer to row
+        memcpy(dest=state.x.data, src=content_row, count=dim)
+
+        # Pluck out the "pos" row of freq_cis_real and freq_cis_imag
+        var freq_cis_real_row = weights.freq_cis_real.slice(pos)
+        var freq_cis_imag_row = weights.freq_cis_imag.slice(pos)
+
+        # Forward all the layers
+        for l in range(config.n_layers):
+            # Attention rmsnorm
+            rmsnorm(state.xb.data, state.x.data, weights.rms_att_weight.slice(l), dim)
             
-            # q rotation
-            var q_idx = i * head_size + j
-            var q0 = q_ptr[q_idx]
-            var q1 = q_ptr[q_idx + 1]
-            q_ptr[q_idx] = q0 * fcr - q1 * fci
-            q_ptr[q_idx + 1] = q0 * fci + q1 * fcr
+            # QKV matmuls
+            var loff = l * config.seq_len * config.kv_dim
             
-            # k rotation
-            if i < config.n_kv_heads:
-                var k_idx = i * head_size + j
-                var k0 = k_ptr[k_idx]
-                var k1 = k_ptr[k_idx + 1]
-                k_ptr[k_idx] = k0 * fcr - k1 * fci
-                k_ptr[k_idx + 1] = k0 * fci + k1 * fcr
+            # Get pointers to key/value cache for this layer/pos
+            var k_ptr = state.key_cache.slice(l, pos)
+            var v_ptr = state.value_cache.slice(l, pos)
+            
+            if kv_dim == dim:
+                batch_matmul[3](
+                    StaticTuple[BufferPtrFloat32, 3](
+                        state.q.data, k_ptr, v_ptr
+                    ),
+                    state.xb.data,
+                    StaticTuple[BufferPtrFloat32, 3](
+                        weights.wq.slice(l),
+                        weights.wk.slice(l),
+                        weights.wv.slice(l),
+                    ),
+                    dim,
+                    dim,
+                    self.workers,
+                )
+            else:
+                matmul(state.q.data, state.xb.data, weights.wq.slice(l), dim, dim, self.workers)
+                batch_matmul[2](
+                    StaticTuple[BufferPtrFloat32, 2](
+                        k_ptr, v_ptr
+                    ),
+                    state.xb.data,
+                    StaticTuple[BufferPtrFloat32, 2](
+                        weights.wk.slice(l),
+                        weights.wv.slice(l),
+                    ),
+                    kv_dim,
+                    dim,
+                    self.workers,
+                )
 
-    parallelize[head_loop](config.n_heads, WORKERS)
+            # Apply RoPE rotation
+            self.rope_rotation_llama(state.q.data, k_ptr, freq_cis_real_row, freq_cis_imag_row, config, head_size)
 
-@always_inline
-fn transformer(
-    token: Int,
-    pos: Int,
-    config: Config,
-    mut state: RunState,
-    weights: TransformerWeights,
-) raises:
-    var dim = config.dim
-    var hidden_dim = config.hidden_dim
-    var head_size = config.head_size
-    var kv_dim = config.kv_dim
-    var kv_mul = config.kv_mul
-    var sqrt_head_size = math.sqrt[dtype=DType.float32, width=1](Float32(head_size))
+            memset_zero(state.xb.data, state.xb.size())
 
-    # Copy the token embedding into x
-    var content_row = weights.token_embedding_table.slice(token) # returns pointer to row
-    memcpy(dest=state.x.data, src=content_row, count=dim)
+            # Multihead attention
+            @parameter
+            fn loop_over_heads(h: Int):
+                var q_offset = h * head_size
+                var att_offset = h * config.seq_len
 
-    # Pluck out the "pos" row of freq_cis_real and freq_cis_imag
-    var freq_cis_real_row = weights.freq_cis_real.slice(pos)
-    var freq_cis_imag_row = weights.freq_cis_imag.slice(pos)
+                for t in range(pos + 1):
+                    var k_offset = loff + t * kv_dim + (h // kv_mul) * head_size
+                    var score: Float32 = 0.0
 
-    # Forward all the layers
-    for l in range(config.n_layers):
-        # Attention rmsnorm
-        rmsnorm(state.xb.data, state.x.data, weights.rms_att_weight.slice(l), dim)
-        
-        # QKV matmuls
-        var loff = l * config.seq_len * config.kv_dim
-        
-        # Get pointers to key/value cache for this layer/pos
-        var k_ptr = state.key_cache.slice(l, pos)
-        var v_ptr = state.value_cache.slice(l, pos)
-        
-        if kv_dim == dim:
-            batch_matmul[3](
-                StaticTuple[BufferPtrFloat32, 3](
-                    state.q.data, k_ptr, v_ptr
-                ),
-                state.xb.data,
-                StaticTuple[BufferPtrFloat32, 3](
-                    weights.wq.slice(l),
-                    weights.wk.slice(l),
-                    weights.wv.slice(l),
-                ),
-                dim,
-                dim,
-            )
-        else:
-            matmul(state.q.data, state.xb.data, weights.wq.slice(l), dim, dim)
+                    @parameter
+                    fn score_fn[_nelts: Int](i: Int):
+                        score += (
+                            state.q.data.load[width=_nelts](q_offset + i)
+                                * state.key_cache.data.load[width=_nelts](k_offset + i)
+                        ).reduce_add()
+
+                    vectorize[score_fn, nelts](head_size)
+                    score /= sqrt_head_size
+                    state.att.data[att_offset + t] = score
+
+                softmax(state.att.data, att_offset, att_offset + pos + 1)
+                
+                var xb_offset = h * head_size
+                for t in range(pos + 1):
+                    var v_offset = loff + t * kv_dim + (h // kv_mul) * head_size
+                    var a = state.att.data[att_offset + t]
+
+                    @parameter
+                    fn xb_accumulate[_nelts: Int](i: Int):
+                        var xbi = state.xb.data.offset(xb_offset + i).load[width=_nelts](0) 
+                            + a * state.value_cache.data.offset(v_offset + i).load[width=_nelts](0)
+                        state.xb.data.offset(xb_offset + i).store[width=_nelts](0, xbi)
+
+                    vectorize[xb_accumulate, nelts](head_size)
+
+            parallelize[loop_over_heads](config.n_heads, self.workers)
+            
+            matmul(state.xb2.data, state.xb.data, weights.wo.slice(l), dim, dim, self.workers)
+            
+            # Residual connection
+            add(state.x.data, state.xb2.data, dim)
+            
+            # FFN rmsnorm
+            rmsnorm(state.xb.data, state.x.data, weights.rms_ffn_weight.slice(l), dim)
+
             batch_matmul[2](
-                StaticTuple[BufferPtrFloat32, 2](
-                    k_ptr, v_ptr
-                ),
+                StaticTuple[BufferPtrFloat32, 2](state.hb.data, state.hb2.data),
                 state.xb.data,
                 StaticTuple[BufferPtrFloat32, 2](
-                    weights.wk.slice(l),
-                    weights.wv.slice(l),
+                    weights.w1.slice(l),
+                    weights.w3.slice(l),
                 ),
-                kv_dim,
+                hidden_dim,
                 dim,
+                self.workers,
             )
 
-        # Apply RoPE rotation
-        rope_rotation_llama(state.q.data, k_ptr, freq_cis_real_row, freq_cis_imag_row, config, head_size)
+            @parameter
+            fn silu[_nelts: Int](i: Int):
+                var initial_hb = state.hb.data.offset(i).load[width=_nelts](0)
+                var hbi = initial_hb * (1.0 / (1.0 + math.exp(-initial_hb)))
+                state.hb.data.offset(i).store[width=_nelts](
+                    0, hbi * state.hb2.data.offset(i).load[width=_nelts](0)
+                )
 
-        memset_zero(state.xb.data, state.xb.size())
-
-        # Multihead attention
-        @parameter
-        fn loop_over_heads(h: Int):
-            var q_offset = h * head_size
-            var att_offset = h * config.seq_len
-
-            for t in range(pos + 1):
-                var k_offset = loff + t * kv_dim + (h // kv_mul) * head_size
-                var score: Float32 = 0.0
-
-                @parameter
-                fn score_fn[_nelts: Int](i: Int):
-                    score += (
-                        state.q.data.load[width=_nelts](q_offset + i)
-                            * state.key_cache.data.load[width=_nelts](k_offset + i)
-                    ).reduce_add()
-
-                vectorize[score_fn, nelts](head_size)
-                score /= sqrt_head_size
-                state.att.data[att_offset + t] = score
-
-            softmax(state.att.data, att_offset, att_offset + pos + 1)
+            vectorize[silu, nelts](hidden_dim)
             
-            var xb_offset = h * head_size
-            for t in range(pos + 1):
-                var v_offset = loff + t * kv_dim + (h // kv_mul) * head_size
-                var a = state.att.data[att_offset + t]
+            matmul(state.xb.data, state.hb.data, weights.w2.slice(l), dim, hidden_dim, self.workers)
 
-                @parameter
-                fn xb_accumulate[_nelts: Int](i: Int):
-                    var xbi = state.xb.data.offset(xb_offset + i).load[width=_nelts](0) 
-                        + a * state.value_cache.data.offset(v_offset + i).load[width=_nelts](0)
-                    state.xb.data.offset(xb_offset + i).store[width=_nelts](0, xbi)
+            # Residual connection
+            add(state.x.data, state.xb.data, dim)
 
-                vectorize[xb_accumulate, nelts](head_size)
-
-        parallelize[loop_over_heads](config.n_heads, WORKERS)
+        # Final rmsnorm
+        rmsnorm(state.x.data, state.x.data, weights.rms_final_weight.data, dim)
         
-        matmul(state.xb2.data, state.xb.data, weights.wo.slice(l), dim, dim)
-        
-        # Residual connection
-        add(state.x.data, state.xb2.data, dim)
-        
-        # FFN rmsnorm
-        rmsnorm(state.xb.data, state.x.data, weights.rms_ffn_weight.slice(l), dim)
-
-        batch_matmul[2](
-            StaticTuple[BufferPtrFloat32, 2](state.hb.data, state.hb2.data),
-            state.xb.data,
-            StaticTuple[BufferPtrFloat32, 2](
-                weights.w1.slice(l),
-                weights.w3.slice(l),
-            ),
-            hidden_dim,
-            dim,
-        )
-
-        @parameter
-        fn silu[_nelts: Int](i: Int):
-            var initial_hb = state.hb.data.offset(i).load[width=_nelts](0)
-            var hbi = initial_hb * (1.0 / (1.0 + math.exp(-initial_hb)))
-            state.hb.data.offset(i).store[width=_nelts](
-                0, hbi * state.hb2.data.offset(i).load[width=_nelts](0)
-            )
-
-        vectorize[silu, nelts](hidden_dim)
-        
-        matmul(state.xb.data, state.hb.data, weights.w2.slice(l), dim, hidden_dim)
-
-        # Residual connection
-        add(state.x.data, state.xb.data, dim)
-
-    # Final rmsnorm
-    rmsnorm(state.x.data, state.x.data, weights.rms_final_weight.data, dim)
-    
-    # Classifier into logits
-    matmul(state.logits.data, state.x.data, weights.wcls.data, config.vocab_size, dim)
+        # Classifier into logits
+        matmul(state.logits.data, state.x.data, weights.wcls.data, config.vocab_size, dim, self.workers)
 
 fn argmax(v: BufferPtrFloat32, size: Int) -> Int:
     var max_i: Int = 0
@@ -712,30 +725,28 @@ fn time_in_ms() -> UInt:
     return time.perf_counter_ns() // 1_000_000
 
 fn print_usage():
-    print("Usage: mojo [-D THREADS=NN] llama2.mojo <checkpoint> [options]")
+    print("Usage: mojo llama2.mojo <checkpoint> [options]")
     print(
         'Example: mojo llama2.mojo stories15M.bin -s 99 -n 256 -t 0.5 -i "Llama'
         ' is an animal"'
     )
     print(
-        'Example: mojo -D THREADS=7 llama2.mojo stories15M.bin -s 99 -n 256 -t 0.5 -i "Llama'
-        ' is an animal"'
-    )
-    print(
-        '-D THREADS=NN sets the number of parallel workers at compile time '
-        '(default: number of performance cores)'
+        'Example: mojo llama2.mojo stories15M.bin -s 99 -n 256 -t 0.5 -i "Llama'
+        ' is an animal" -j 7'
     )
     print("Options:")
     print("  -s <int>    random seed, default time.now()")
-    print("  -t <float>  temperature in [0,1.0], default 1.0")
+    print("  -t <float>  temperature in [0,1.0], default 0.9")
     print(
         "  -n <int>    number of steps to run for, default 256. 0 = max_seq_len"
     )
     print("  -i <string> input prompt")
-    print("  -z          tokenizer path")
+    print("  -z <string> tokenizer path")
+    print("  -j <int>    number of parallel workers (default: number of performance cores)")
+    print("  -pc <int>   print config (0 or 1)")
 
 fn main() raises:
-    var workers = WORKERS
+
     var tokenizer = "tokenizer.bin"
     var checkpoint = "stories15M.bin"
     var temperature = Float32(0.9)
@@ -743,6 +754,7 @@ fn main() raises:
     var prompt = String("")
     var rng_seed: Int = Int(time.perf_counter_ns() // 1_000_000)
     var print_config = 0
+    var workers: Int = num_performance_cores()
 
     @parameter
     fn argparse() raises -> Int:
@@ -761,6 +773,8 @@ fn main() raises:
                 rng_seed = atol(args[i + 1])
             if args[i] == "-i":
                 prompt = args[i + 1]
+            if args[i] == "-j":
+                workers = atol(args[i + 1])
             if args[i] == "-pc":
                 print_config = atol(args[i + 1])
             if args[i] == "-t":
@@ -779,7 +793,8 @@ fn main() raises:
         print_usage()
         return
 
-    print("num parallel workers:", workers, " SIMD width:", nelts)
+    var transformer = Transformer(workers)
+    print("num parallel workers:", transformer.workers, " SIMD width:", nelts)
     random.seed(rng_seed)
     var config = Config(checkpoint, print_config == 1)
     var weights = TransformerWeights(checkpoint, config)
@@ -802,7 +817,7 @@ fn main() raises:
     var token = 1
     var pos = 0
     while pos < steps:
-        transformer(token, pos, config, state, weights)
+        transformer.transformer(token, pos, config, state, weights)
 
         if pos < len(prompt_tokens):
             next_token = prompt_tokens[pos]

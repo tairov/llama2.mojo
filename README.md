@@ -84,6 +84,16 @@ Then, just run the Mojo
 mojo llama2.mojo stories15M.bin -s 100 -n 256 -t 0.5 -i "Once upon a time"
 ```
 
+**Command-line options:**
+
+- `-s <int>` - random seed (default: current time in milliseconds)
+- `-n <int>` - number of steps to run for (default: 256, 0 = max_seq_len)
+- `-t <float>` - temperature in [0,1.0] (default: 0.9)
+- `-i <string>` - input prompt
+- `-z <string>` - tokenizer path (default: tokenizer.bin)
+- `-j <int>` - number of parallel workers (default: number of performance cores)
+- `-pc <int>` - print config (0 or 1)
+
 **example output**
 
 ```
