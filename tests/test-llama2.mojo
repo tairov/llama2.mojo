@@ -1,26 +1,6 @@
 from testing import assert_true, assert_almost_equal, assert_equal
-from llama2 import Accumulator, nelts, Config, Tokenizer, str_concat, string_compare, wrap, string_from_bytes, TransformerWeights, RunState, Matrix
+from llama2 import nelts, Config, Tokenizer, str_concat, string_compare, wrap, string_from_bytes, TransformerWeights, RunState, Matrix
 
-fn test_accumulator() raises:
-    var acc = Accumulator[nelts]()
-    
-    # Create a SIMD vector of 1.0s
-    var val = SIMD[DType.float32, nelts](1.0)
-    
-    # Accumulate once
-    acc.accumulate(val)
-    var total = acc.total()
-    print("Total after 1 accumulate:", total)
-    assert_almost_equal(total[0], Float32(nelts) * 1.0, atol=0.001)
-    
-    # Accumulate again
-    acc.accumulate(val)
-    total = acc.total()
-    print("Total after 2 accumulates:", total)
-    assert_almost_equal(total[0], Float32(nelts) * 2.0, atol=0.001)
-    
-    # Manual cleanup since Accumulator is trivial and doesn't have a destructor
-    acc.data.free()
 
 fn test_config() raises:
     # Test loading Config from stories15M.bin
@@ -442,7 +422,6 @@ fn test_matrix_slice() raises:
     
 
 fn main() raises:
-    test_accumulator()
     test_matrix_1d()
     test_matrix_2d()
     test_matrix_3d()

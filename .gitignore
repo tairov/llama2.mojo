@@ -4,6 +4,7 @@ stories*.bin
 # Compiled binaries
 llama2
 llama2-*
+llama2_*
 
 # Python cache
 __pycache__/
