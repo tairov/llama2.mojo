@@ -120,32 +120,16 @@ struct Matrix(Movable):
         var rows = self.dims[len(self.dims)-2]
         var offset = idx1 * rows * cols + idx2 * cols
         return self.data.offset(offset)
-    
-    fn _dbg_has_nan(self, n: Int) -> Bool:
-        """Check if the first n elements contain NaN values."""
-        var check_count = min(n, self.size())
-        for i in range(check_count):
-            if not (self.data[i] == self.data[i]):  # NaN check
-                return True
-        return False
 
+    @always_inline
     fn dim(self, idx: Int) -> Int:
         if idx < len(self.dims):
             return self.dims[idx]
         return 0
-        
+
+    @always_inline
     fn num_elements(self) -> Int:
         return self.size()
-
-fn str_concat(s1: String, s2: String) -> String:
-    return s1 + s2
-
-fn string_compare(a: String, b: String) -> Int:
-    if a < b:
-        return -1
-    elif a > b:
-        return 1
-    return 0
 
 fn wrap(token: String) -> String:
     alias a = String("\\n")
@@ -710,7 +694,7 @@ fn bpe_encode(mut tokens: List[Int], text: String, tok: Tokenizer):
         var best_idx = -1
 
         for i in range(len(tokens) - 1):
-            var str = str_concat(tok.vocab[tokens[i]], tok.vocab[tokens[i + 1]])
+            var str = tok.vocab[tokens[i]] + tok.vocab[tokens[i + 1]]
             var id = tok.find(str)
             if id != -1 and tok.vocab_scores[id] > best_score:
                 best_score = tok.vocab_scores[id]
