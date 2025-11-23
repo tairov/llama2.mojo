@@ -23,7 +23,7 @@ struct Matrix(Movable):
     var dims: List[Int]
 
     fn __init__(out self, *dims: Int):
-        self.data = UnsafePointer[Float32, MutOrigin.external]()
+        self.data = BufferPtrFloat32()
         self.allocated = 0
         self.dims = List[Int]()
         for i in range(len(dims)):
@@ -206,6 +206,12 @@ struct Tokenizer:
 
     fn find(self, token_o: String) -> Int:
         var token = wrap(token_o)
+
+        # Handle TinyLlama specific newline mapping
+        if token == "\n":
+            var idx = self.map_vocab_to_index.find("<0x0A>")
+            if idx: return idx.value()
+        
         var index = self.map_vocab_to_index.find(token)
         return index.or_else(-1)
     
@@ -332,6 +338,7 @@ struct TransformerWeights:
         self.rms_final_weight = read_weights(config.dim)
         self.freq_cis_real = read_weights(config.seq_len, config.head_size // 2)
         self.freq_cis_imag = read_weights(config.seq_len, config.head_size // 2)
+
 
         if config.shared_weights:
             # Copy dims properly for view
@@ -483,7 +490,7 @@ fn add(dest: BufferPtrFloat32, src: BufferPtrFloat32, size: Int):
 struct Transformer:
     var workers: Int
 
-    fn __init__(out self, workers: Int = num_performance_cores()):
+    fn __init__(out self, workers: Int):
         self.workers = workers
 
     @always_inline
@@ -721,18 +728,33 @@ fn bpe_encode(mut tokens: List[Int], text: String, tok: Tokenizer):
             _tokens.append(tokens[i])
         tokens = _tokens^
 
+fn get_token_str(var token: Int, var token_str: String) -> String:
+    var is_byte_token = False
+
+    # add special token retrieval for TinyLlama
+    if len(token_str) == 6 and token_str[0] == "<" and token_str[1] == "0" and token_str[2] == "x":
+        if token_str == "<0x0A>":
+            token_str = "\n"
+        elif token_str == "<0x09>":
+            token_str = "\t"
+        else:
+            is_byte_token = True
+    
+    if not is_byte_token:
+        if token == 1 and len(token_str) > 0 and token_str[0] == " ":
+            token_str = token_str[1:]
+    else:
+        token_str = ""
+
+    return token_str
+
 fn time_in_ms() -> UInt:
     return time.perf_counter_ns() // 1_000_000
 
 fn print_usage():
     print("Usage: mojo llama2.mojo <checkpoint> [options]")
     print(
-        'Example: mojo llama2.mojo stories15M.bin -s 99 -n 256 -t 0.5 -i "Llama'
-        ' is an animal"'
-    )
-    print(
-        'Example: mojo llama2.mojo stories15M.bin -s 99 -n 256 -t 0.5 -i "Llama'
-        ' is an animal" -j 7'
+        'Example: mojo llama2.mojo stories15M.bin -j 6 -s 99 -n 256 -t 0.5 -i "Once upon a time"'
     )
     print("Options:")
     print("  -s <int>    random seed, default time.now()")
@@ -833,11 +855,9 @@ fn main() raises:
 
             if next_token == 1 or next_token == 2:
                 break
-        var token_str = tok.vocab[next_token]
         
-        if token == 1 and len(token_str) > 0 and token_str[0] == " ":
-            token_str = token_str[1:]
-
+        var token_str = get_token_str(token, tok.vocab[next_token])
+        
         print(token_str, end="")
 
         token = next_token

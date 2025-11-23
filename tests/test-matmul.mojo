@@ -39,7 +39,7 @@ fn test_matmul_basic() raises:
     print("  A (vector):", A[0], A[1], A[2], A[3])
     print("  B (matrix 3x4): identity-like pattern")
     
-    matmul(C.data, A.data, B.data, 3, 4)
+    matmul(C.data, A.data, B.data, 3, 4, 1)
     
     print("  C (result):", C[0], C[1], C[2])
     
@@ -67,7 +67,7 @@ fn test_matmul_all_ones() raises:
         for col in range(3):
             B[row, col] = 1.0
     
-    matmul(C.data, A.data, B.data, 2, 3)
+    matmul(C.data, A.data, B.data, 2, 3, 1)
     
     print("  A: all ones (size 3)")
     print("  B: all ones (2x3)")
@@ -97,7 +97,7 @@ fn test_matmul_larger() raises:
         for col in range(10):
             B[row, col] = Float32(row)
     
-    matmul(C.data, A.data, B.data, 5, 10)
+    matmul(C.data, A.data, B.data, 5, 10, 1)
     
     print("  A: [1, 2, 3, ..., 10]")
     print("  B: row i has all values = i")
@@ -129,7 +129,7 @@ fn test_matmul_zero() raises:
         for col in range(4):
             B[row, col] = Float32(row + col)
     
-    matmul(C.data, A.data, B.data, 3, 4)
+    matmul(C.data, A.data, B.data, 3, 4, 1)
     
     print("  A: all zeros")
     print("  B: non-zero values")
@@ -161,7 +161,7 @@ fn test_batch_matmul_single() raises:
     var C_tuple = StaticTuple[BufferPtrFloat32, 1](C.data)
     var B_tuple = StaticTuple[BufferPtrFloat32, 1](B.data)
     
-    batch_matmul[1](C_tuple, A.data, B_tuple, 3, 4)
+    batch_matmul[1](C_tuple, A.data, B_tuple, 3, 4, 1)
     
     print("  A: [1, 2, 3, 4]")
     print("  B: identity-like (3x4)")
@@ -202,7 +202,7 @@ fn test_batch_matmul_two() raises:
     var C_tuple = StaticTuple[BufferPtrFloat32, 2](C1.data, C2.data)
     var B_tuple = StaticTuple[BufferPtrFloat32, 2](B1.data, B2.data)
     
-    batch_matmul[2](C_tuple, A.data, B_tuple, 2, 3)
+    batch_matmul[2](C_tuple, A.data, B_tuple, 2, 3, 1)
     
     print("  A: [1, 2, 3]")
     print("  B1: all ones (2x3)")
@@ -254,7 +254,7 @@ fn test_batch_matmul_three() raises:
     var C_tuple = StaticTuple[BufferPtrFloat32, 3](C1.data, C2.data, C3.data)
     var B_tuple = StaticTuple[BufferPtrFloat32, 3](B1.data, B2.data, B3.data)
     
-    batch_matmul[3](C_tuple, A.data, B_tuple, 2, 4)
+    batch_matmul[3](C_tuple, A.data, B_tuple, 2, 4, 1)
     
     print("  A: [1, 1, 1, 1]")
     print("  B1, B2, B3: different row patterns")
@@ -297,7 +297,7 @@ fn test_matmul_dimension_validation() raises:
         for col in range(4):
             B[row, col] = Float32(row == col)  # Identity-like
     
-    matmul(C.data, A.data, B.data, 2, 4)
+    matmul(C.data, A.data, B.data, 2, 4, 1)
     
     print("  A: [1, 2, 3, 4]")
     print("  B: identity-like (2x4)")
@@ -327,12 +327,12 @@ fn test_batch_matmul_consistency() raises:
             B[row, col] = Float32(row * col + 1)
     
     # Regular matmul
-    matmul(C_regular.data, A.data, B.data, 3, 5)
+    matmul(C_regular.data, A.data, B.data, 3, 5, 1)
     
     # Batch matmul with n=1
     var C_tuple = StaticTuple[BufferPtrFloat32, 1](C_batch.data)
     var B_tuple = StaticTuple[BufferPtrFloat32, 1](B.data)
-    batch_matmul[1](C_tuple, A.data, B_tuple, 3, 5)
+    batch_matmul[1](C_tuple, A.data, B_tuple, 3, 5, 1)
     
     print("  Regular matmul result:", C_regular[0], C_regular[1], C_regular[2])
     print("  Batch matmul result:  ", C_batch[0], C_batch[1], C_batch[2])

@@ -1,5 +1,6 @@
 from testing import assert_true, assert_almost_equal, assert_equal
-from llama2 import Matrix, Config, RunState, TransformerWeights, rope_rotation_llama, transformer
+from llama2 import Matrix, Config, RunState, TransformerWeights, Transformer
+from sys.info import num_performance_cores
 import math
 
 fn test_rope_rotation() raises:
@@ -10,6 +11,7 @@ fn test_rope_rotation() raises:
     var config_file = "stories15M.bin"
     var config = Config(config_file, False)
     var state = RunState(config)
+    var transformer = Transformer(num_performance_cores())
     
     print("  Config: dim =", config.dim, ", n_heads =", config.n_heads, ", head_size =", config.head_size)
     
@@ -34,7 +36,7 @@ fn test_rope_rotation() raises:
         freq_real[i] = math.cos(angle)
         freq_imag[i] = math.sin(angle)
     
-    rope_rotation_llama(state.q.data, k.data, freq_real.data, freq_imag.data, config, config.head_size)
+    transformer.rope_rotation_llama(state.q.data, k.data, freq_real.data, freq_imag.data, config, config.head_size)
     
     print("    After RoPE q[0:4]:", state.q[0], state.q[1], state.q[2], state.q[3])
     print("    After RoPE k[0:4]:", k[0], k[1], k[2], k[3])
@@ -59,7 +61,7 @@ fn test_rope_rotation() raises:
         freq_real[i] = 1.0  # cos(0) = 1
         freq_imag[i] = 0.0  # sin(0) = 0
     
-    rope_rotation_llama(state.q.data, k.data, freq_real.data, freq_imag.data, config, config.head_size)
+    transformer.rope_rotation_llama(state.q.data, k.data, freq_real.data, freq_imag.data, config, config.head_size)
     
     print("    Original q[2:4]:", orig_q2, orig_q3)
     print("    After identity rotation q[2:4]:", state.q[2], state.q[3])
@@ -81,7 +83,7 @@ fn test_rope_rotation() raises:
         freq_real[i] = math.cos(Float32(i) * 0.2)
         freq_imag[i] = math.sin(Float32(i) * 0.2)
     
-    rope_rotation_llama(state.q.data, k.data, freq_real.data, freq_imag.data, config, config.head_size)
+    transformer.rope_rotation_llama(state.q.data, k.data, freq_real.data, freq_imag.data, config, config.head_size)
     
     var mag_after: Float32 = 0.0
     for i in range(8):
@@ -103,6 +105,7 @@ fn test_transformer() raises:
     # Load configuration and weights
     var config_file = "stories15M.bin"
     var config = Config(config_file, False)
+    var transformer = Transformer(num_performance_cores())
     
     print("  Loading model weights (this may take a moment)...")
     var weights = TransformerWeights(config_file, config)
@@ -113,7 +116,7 @@ fn test_transformer() raises:
     print("  ✓ State created")
     
     print("\n  Test 1: Single forward pass")
-    transformer(1, 0, config, state, weights)
+    transformer.transformer(1, 0, config, state, weights)
     
     print("    First 5 logits:", state.logits[0], state.logits[1], state.logits[2], state.logits[3], state.logits[4])
     
@@ -145,7 +148,7 @@ fn test_transformer() raises:
     print("\n  Test 2: Multiple positions")
     var logit0 = state.logits[0]
     
-    transformer(100, 1, config, state, weights)
+    transformer.transformer(100, 1, config, state, weights)
     var logit1 = state.logits[0]
     
     print("    Logit[0] at pos 0:", logit0)
