@@ -52,8 +52,6 @@ At the moment, the following models were successfully executed via `llama2.mojo`
 Make sure you have installed
 and [configured mojo on your environment](https://docs.modular.com/mojo/manual/get-started/index.html)
 
-Or you can use [mojo playground](https://playground.modular.com/) to run this model.
-
 
 ## feel the 🔥 magic
 
