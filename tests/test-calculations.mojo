@@ -353,7 +353,7 @@ fn test_sample_basic() raises:
     print("  Probabilities:", probs[0], probs[1], probs[2])
     
     # Sample multiple times and check distribution
-    var counts = List[Int](3)
+    var counts = List[Int]()
     for _ in range(3):
         counts.append(0)
     
@@ -412,7 +412,7 @@ fn test_sample_uniform() raises:
     print("  Probabilities: all 0.25")
     
     # Sample multiple times
-    var counts = List[Int](4)
+    var counts = List[Int]()
     for _ in range(4):
         counts.append(0)
     
@@ -540,4 +540,3 @@ fn main() raises:
     print("\n" + "=" * 60)
     print("All calculation tests passed! ✓")
     print("=" * 60)
-

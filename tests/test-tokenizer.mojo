@@ -1,5 +1,5 @@
 from testing import assert_true, assert_equal
-from llama2 import Tokenizer, str_concat, bpe_encode
+from llama2 import Tokenizer, bpe_encode
 
 fn test_tokenizer() raises:
     """Test loading Tokenizer from tokenizer.bin."""
@@ -245,4 +245,3 @@ fn main() raises:
     print("\n" + "=" * 60)
     print("All tokenizer tests passed! ✓")
     print("=" * 60)
-

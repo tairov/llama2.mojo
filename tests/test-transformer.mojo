@@ -2,13 +2,37 @@ from testing import assert_true, assert_almost_equal, assert_equal
 from llama2 import Matrix, Config, RunState, TransformerWeights, Transformer
 from sys.info import num_performance_cores
 import math
+import os
+
+fn file_exists(path: String) -> Bool:
+    try:
+        with open(path, "r") as _:
+            pass
+        return True
+    except:
+        return False
+
+fn resolve_model_path() -> String:
+    if file_exists("stories15M.bin"):
+        return "stories15M.bin"
+
+    var home = os.getenv("HOME")
+    if len(home) > 0:
+        var home_model = home + "/projects/opensource/models/stories15M.bin"
+        if file_exists(home_model):
+            return home_model
+
+    return ""
 
 fn test_rope_rotation() raises:
     """Test RoPE rotation on query and key vectors."""
     print("\nTesting RoPE rotation:")
     
     # Create config and state
-    var config_file = "stories15M.bin"
+    var config_file = resolve_model_path()
+    if len(config_file) == 0:
+        print("  Skipping: stories15M.bin not found")
+        return
     var config = Config(config_file, False)
     var state = RunState(config)
     var transformer = Transformer(num_performance_cores())

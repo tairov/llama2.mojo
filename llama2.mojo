@@ -12,10 +12,10 @@ import os
 import random
 import time
 
-alias NUM_CONFIG_INT = 7
+comptime NUM_CONFIG_INT = 7
 
-alias nelts = (4 * simd_width_of[Float32]())
-alias BufferPtrFloat32 = UnsafePointer[Float32, MutOrigin.external]
+comptime nelts = (4 * simd_width_of[Float32]())
+comptime BufferPtrFloat32 = UnsafePointer[Float32, MutExternalOrigin]
 
 struct Matrix(Movable):
     var data: BufferPtrFloat32
@@ -29,7 +29,7 @@ struct Matrix(Movable):
         for i in range(len(dims)):
             self.dims.append(dims[i])
         self.alloc()
-    
+
     # Constructor for creating views/slices without allocation
     fn __init__(out self, ptr: BufferPtrFloat32, *dims: Int):
         self.data = ptr
@@ -69,7 +69,7 @@ struct Matrix(Movable):
     @always_inline
     fn set_buf_ptr(mut self, ptr: BufferPtrFloat32):
         self.data = ptr
-    
+
     @always_inline
     fn __getitem__(self, x: Int) -> Float32:
         return self.data[x]
@@ -78,7 +78,7 @@ struct Matrix(Movable):
     fn __getitem__(self, y: Int, x: Int) -> Float32:
         # 2D access: y * cols + x
         return self.data[y * self.dims[len(self.dims)-1] + x]
-    
+
     @always_inline
     fn __getitem__(self, z: Int, y: Int, x: Int) -> Float32:
         # 3D access: z * (rows * cols) + y * cols + x
@@ -89,7 +89,7 @@ struct Matrix(Movable):
     @always_inline
     fn __setitem__(self, x: Int, val: Float32):
         self.data[x] = val
-        
+
     @always_inline
     fn __setitem__(self, y: Int, x: Int, val: Float32):
         self.data[y * self.dims[len(self.dims)-1] + x] = val
@@ -106,12 +106,12 @@ struct Matrix(Movable):
         # If 1D (rank 1), slice the element -> offset = idx
         if len(self.dims) > 2:
              var stride = self.dims[1] * self.dims[2]
-             return self.data.offset(idx * stride)
+             return self.data + idx * stride
         elif len(self.dims) > 1:
-             return self.data.offset(idx * self.dims[1])
+             return self.data + idx * self.dims[1]
         else:
-             return self.data.offset(idx)
-    
+             return self.data + idx
+
     # Slice method: return UnsafePointer for a specific layer and row
     # This assumes standard 3D mapping or 2D mapping where layer=0
     @always_inline
@@ -119,7 +119,7 @@ struct Matrix(Movable):
         var cols = self.dims[len(self.dims)-1]
         var rows = self.dims[len(self.dims)-2]
         var offset = idx1 * rows * cols + idx2 * cols
-        return self.data.offset(offset)
+        return self.data + offset
 
     @always_inline
     fn dim(self, idx: Int) -> Int:
@@ -132,10 +132,10 @@ struct Matrix(Movable):
         return self.size()
 
 fn wrap(token: String) -> String:
-    alias a = String("\\n")
-    alias b = String("\\t")
-    alias c = String("'")
-    alias d = String('"')
+    comptime a = String("\\n")
+    comptime b = String("\\t")
+    comptime c = String("'")
+    comptime d = String('"')
     if token == a:
         return String("\n")
     if token == b:
@@ -146,6 +146,16 @@ fn wrap(token: String) -> String:
         return String('"')
 
     return token
+
+fn str_concat(a: String, b: String) -> String:
+    return a + b
+
+fn string_compare(a: String, b: String) -> Int:
+    if a < b:
+        return -1
+    if a > b:
+        return 1
+    return 0
 
 fn string_from_bytes(var bytes: List[UInt8]) -> String:
     var result = String("")
@@ -195,10 +205,10 @@ struct Tokenizer:
         if token == "\n":
             var idx = self.map_vocab_to_index.find("<0x0A>")
             if idx: return idx.value()
-        
+
         var index = self.map_vocab_to_index.find(token)
         return index.or_else(-1)
-    
+
     fn print_tokens(self, n: Int):
         var count = min(n, self.vocab_size)
         print("First", count, "tokens:")
@@ -237,7 +247,7 @@ struct Config:
         self.shared_weights = self.vocab_size > 0
         if not self.shared_weights:
             self.vocab_size = -self.vocab_size
-        
+
         if print_config:
             print("config: dim, hidden_dim", self.dim, self.hidden_dim)
             print("config: n_layers, n_heads", self.n_layers, self.n_heads)
@@ -264,10 +274,10 @@ struct RunState:
         self.hb = Matrix(config.hidden_dim)
         self.hb2 = Matrix(config.hidden_dim)
         self.q = Matrix(config.dim)
-        
+
         self.logits = Matrix(config.vocab_size)
         self.att = Matrix(config.n_heads, config.seq_len)
-        
+
         self.key_cache = Matrix(config.n_layers, config.seq_len, config.kv_dim)
         self.value_cache = Matrix(config.n_layers, config.seq_len, config.kv_dim)
 
@@ -301,7 +311,7 @@ struct TransformerWeights:
             for i in range(len(dims)):
                 dim_list.append(dims[i])
                 num_elements *= dims[i]
-                
+
             var tmp = f.read_bytes(
                 num_elements * size_of[Float32]()
             )
@@ -354,25 +364,23 @@ fn rmsnorm(
     var tmp_ptr = stack_allocation[nelts, Float32]()
     tmp_ptr.store[width=nelts](0, SIMD[DType.float32, nelts](0))
 
-    @parameter
-    fn _sum2[_nelts: Int](j: Int):
-        var val = x.offset(j).load[width=_nelts](0) ** 2
+    fn _sum2[_nelts: Int](j: Int) unified {mut}:
+        var val = (x + j).load[width=_nelts](0) ** 2
         var curr = tmp_ptr.load[width=_nelts](0)
         tmp_ptr.store[width=_nelts](0, curr + val)
 
-    vectorize[_sum2, nelts](size)
+    vectorize[nelts](size, _sum2)
 
     var ss: Float32 = tmp_ptr.load[width=nelts](0).reduce_add()
     ss = ss / size + 1e-5
     ss = 1.0 / math.sqrt(ss)
 
     # Normalize and scale
-    @parameter
-    fn _norm[_nelts: Int](j: Int):
+    fn _norm[_nelts: Int](j: Int) unified {mut}:
         var val = weight.load[width=_nelts](j) * ss * x.load[width=_nelts](j)
-        o.offset(j).store[width=_nelts](0, val)
+        (o + j).store[width=_nelts](0, val)
 
-    vectorize[_norm, nelts](size)
+    vectorize[nelts](size, _norm)
 
 @always_inline
 fn softmax(mut x: BufferPtrFloat32, size: Int):
@@ -382,35 +390,32 @@ fn softmax(mut x: BufferPtrFloat32, size: Int):
 fn softmax(mut x: BufferPtrFloat32, start: Int, end: Int):
     var max_val: Float32 = -1e9
 
-    @parameter
-    fn _max[_nelts: Int](ii: Int):
+    fn _max[_nelts: Int](ii: Int) unified {mut}:
         var val = x.load[width=_nelts](start + ii).reduce_max()
         if val > max_val:
             max_val = val
 
-    vectorize[_max, nelts](end - start)
+    vectorize[nelts](end - start, _max)
 
     var acc_ptr = stack_allocation[nelts, Float32]()
     acc_ptr.store[width=nelts](0, SIMD[DType.float32, nelts](0))
 
-    @parameter
-    fn _exp[_nelts: Int](ii: Int):
+    fn _exp[_nelts: Int](ii: Int) unified {mut}:
         var val = math.exp(x.load[width=_nelts](start + ii) - max_val)
         x.store[width=_nelts](start + ii, val)
         var curr = acc_ptr.load[width=_nelts](0)
         acc_ptr.store[width=_nelts](0, curr + val)
 
-    vectorize[_exp, nelts](end - start)
+    vectorize[nelts](end - start, _exp)
 
     var ssum = acc_ptr.load[width=nelts](0).reduce_add()
 
-    @parameter
-    fn _norm[_nelts: Int](ii: Int):
+    fn _norm[_nelts: Int](ii: Int) unified {mut}:
         x.store[width=_nelts](
             start + ii, x.load[width=_nelts](start + ii) / ssum
         )
 
-    vectorize[_norm, nelts](end - start)
+    vectorize[nelts](end - start, _norm)
 
 @always_inline
 fn batch_matmul[
@@ -426,24 +431,23 @@ fn batch_matmul[
     @parameter
     fn compute_row(i: Int):
         var tmp_ptr = stack_allocation[n * nelts, Float32]()
-        
+
         @parameter
         for k in range(n):
             tmp_ptr.store[width=nelts](k * nelts, SIMD[DType.float32, nelts](0))
 
         var row_offset = i * cols
 
-        @parameter
-        fn dot[_nelts: Int](j: Int):
-            var a = A.offset(j).load[width=_nelts](0)
+        fn dot[_nelts: Int](j: Int) unified {mut}:
+            var a = (A + j).load[width=_nelts](0)
 
             @parameter
             for k in range(n):
-                var val = a * B[k].offset(row_offset + j).load[width=_nelts](0)
+                var val = a * (B[k] + row_offset + j).load[width=_nelts](0)
                 var curr = tmp_ptr.load[width=_nelts](k * nelts)
                 tmp_ptr.store[width=_nelts](k * nelts, curr + val)
 
-        vectorize[dot, nelts](cols)
+        vectorize[nelts](cols, dot)
 
         @parameter
         for k in range(n):
@@ -464,12 +468,11 @@ fn matmul(C: BufferPtrFloat32, A: BufferPtrFloat32, B: BufferPtrFloat32, rows: I
 
 @always_inline
 fn add(dest: BufferPtrFloat32, src: BufferPtrFloat32, size: Int):
-    @parameter
-    fn add_kernel[_nelts: Int](i: Int):
-        var a = dest.offset(i).load[width=_nelts](0)
-        var b = src.offset(i).load[width=_nelts](0)
+    fn add_kernel[_nelts: Int](i: Int) unified {mut}:
+        var a = (dest + i).load[width=_nelts](0)
+        var b = (src + i).load[width=_nelts](0)
         dest.store[width=_nelts](i, a + b)
-    vectorize[add_kernel, nelts](size)
+    vectorize[nelts](size, add_kernel)
 
 struct Transformer:
     var workers: Int
@@ -492,14 +495,14 @@ struct Transformer:
             for j in range(0, head_size, 2):
                 var fcr = freq_cis_real_row[j // 2]
                 var fci = freq_cis_imag_row[j // 2]
-                
+
                 # q rotation
                 var q_idx = i * head_size + j
                 var q0 = q_ptr[q_idx]
                 var q1 = q_ptr[q_idx + 1]
                 q_ptr[q_idx] = q0 * fcr - q1 * fci
                 q_ptr[q_idx + 1] = q0 * fci + q1 * fcr
-                
+
                 # k rotation
                 if i < config.n_kv_heads:
                     var k_idx = i * head_size + j
@@ -538,14 +541,14 @@ struct Transformer:
         for l in range(config.n_layers):
             # Attention rmsnorm
             rmsnorm(state.xb.data, state.x.data, weights.rms_att_weight.slice(l), dim)
-            
+
             # QKV matmuls
             var loff = l * config.seq_len * config.kv_dim
-            
+
             # Get pointers to key/value cache for this layer/pos
             var k_ptr = state.key_cache.slice(l, pos)
             var v_ptr = state.value_cache.slice(l, pos)
-            
+
             if kv_dim == dim:
                 batch_matmul[3](
                     StaticTuple[BufferPtrFloat32, 3](
@@ -592,39 +595,37 @@ struct Transformer:
                     var k_offset = loff + t * kv_dim + (h // kv_mul) * head_size
                     var score: Float32 = 0.0
 
-                    @parameter
-                    fn score_fn[_nelts: Int](i: Int):
+                    fn score_fn[_nelts: Int](i: Int) unified {mut}:
                         score += (
                             state.q.data.load[width=_nelts](q_offset + i)
                                 * state.key_cache.data.load[width=_nelts](k_offset + i)
                         ).reduce_add()
 
-                    vectorize[score_fn, nelts](head_size)
+                    vectorize[nelts](head_size, score_fn)
                     score /= sqrt_head_size
                     state.att.data[att_offset + t] = score
 
                 softmax(state.att.data, att_offset, att_offset + pos + 1)
-                
+
                 var xb_offset = h * head_size
                 for t in range(pos + 1):
                     var v_offset = loff + t * kv_dim + (h // kv_mul) * head_size
                     var a = state.att.data[att_offset + t]
 
-                    @parameter
-                    fn xb_accumulate[_nelts: Int](i: Int):
-                        var xbi = state.xb.data.offset(xb_offset + i).load[width=_nelts](0) 
-                            + a * state.value_cache.data.offset(v_offset + i).load[width=_nelts](0)
-                        state.xb.data.offset(xb_offset + i).store[width=_nelts](0, xbi)
+                    fn xb_accumulate[_nelts: Int](i: Int) unified {mut}:
+                        var xbi = (state.xb.data + xb_offset + i).load[width=_nelts](0)
+                            + a * (state.value_cache.data + v_offset + i).load[width=_nelts](0)
+                        (state.xb.data + xb_offset + i).store[width=_nelts](0, xbi)
 
-                    vectorize[xb_accumulate, nelts](head_size)
+                    vectorize[nelts](head_size, xb_accumulate)
 
             parallelize[loop_over_heads](config.n_heads, self.workers)
-            
+
             matmul(state.xb2.data, state.xb.data, weights.wo.slice(l), dim, dim, self.workers)
-            
+
             # Residual connection
             add(state.x.data, state.xb2.data, dim)
-            
+
             # FFN rmsnorm
             rmsnorm(state.xb.data, state.x.data, weights.rms_ffn_weight.slice(l), dim)
 
@@ -640,16 +641,15 @@ struct Transformer:
                 self.workers,
             )
 
-            @parameter
-            fn silu[_nelts: Int](i: Int):
-                var initial_hb = state.hb.data.offset(i).load[width=_nelts](0)
+            fn silu[_nelts: Int](i: Int) unified {mut}:
+                var initial_hb = (state.hb.data + i).load[width=_nelts](0)
                 var hbi = initial_hb * (1.0 / (1.0 + math.exp(-initial_hb)))
-                state.hb.data.offset(i).store[width=_nelts](
-                    0, hbi * state.hb2.data.offset(i).load[width=_nelts](0)
+                (state.hb.data + i).store[width=_nelts](
+                    0, hbi * (state.hb2.data + i).load[width=_nelts](0)
                 )
 
-            vectorize[silu, nelts](hidden_dim)
-            
+            vectorize[nelts](hidden_dim, silu)
+
             matmul(state.xb.data, state.hb.data, weights.w2.slice(l), dim, hidden_dim, self.workers)
 
             # Residual connection
@@ -657,7 +657,7 @@ struct Transformer:
 
         # Final rmsnorm
         rmsnorm(state.x.data, state.x.data, weights.rms_final_weight.data, dim)
-        
+
         # Classifier into logits
         matmul(state.logits.data, state.x.data, weights.wcls.data, config.vocab_size, dim, self.workers)
 
@@ -681,7 +681,7 @@ fn sample(probabilities: BufferPtrFloat32, size: Int) -> Int:
 
 fn bpe_encode(mut tokens: List[Int], text: String, tok: Tokenizer):
     for pos in range(len(text)):
-        var char = String(text[pos])
+        var char = String(text[pos:pos+1])
         var id = tok.find(char)
         if id == -1:
             print("Not a good prompt token at pos ", pos)
@@ -716,17 +716,17 @@ fn get_token_str(var token: Int, var token_str: String) -> String:
     var is_byte_token = False
 
     # add special token retrieval for TinyLlama
-    if len(token_str) == 6 and token_str[0] == "<" and token_str[1] == "0" and token_str[2] == "x":
+    if len(token_str) == 6 and String(token_str[0:1]) == "<" and String(token_str[1:2]) == "0" and String(token_str[2:3]) == "x":
         if token_str == "<0x0A>":
             token_str = "\n"
         elif token_str == "<0x09>":
             token_str = "\t"
         else:
             is_byte_token = True
-    
+
     if not is_byte_token:
-        if token == 1 and len(token_str) > 0 and token_str[0] == " ":
-            token_str = token_str[1:]
+        if token == 1 and len(token_str) > 0 and String(token_str[0:1]) == " ":
+            token_str = String(token_str[1:])
     else:
         token_str = ""
 
@@ -787,11 +787,11 @@ fn main() raises:
                 var val = args[i + 1]
                 temperature = 0.0
                 for c in range(0, len(val)):
-                    if val[c] == ".":
-                        temperature += atol(val[c + 1]) * Float32(0.1)
+                    if String(val[c:c+1]) == ".":
+                        temperature += atol(String(val[c+1:c+2])) * Float32(0.1)
                         break
                     else:
-                        temperature = atol(val[c])
+                        temperature = atol(String(val[c:c+1]))
         return 1
 
     var res = argparse()
@@ -839,9 +839,9 @@ fn main() raises:
 
             if next_token == 1 or next_token == 2:
                 break
-        
+
         var token_str = get_token_str(token, tok.vocab[next_token])
-        
+
         print(token_str, end="")
 
         token = next_token
@@ -851,4 +851,9 @@ fn main() raises:
             start = time_in_ms()
 
     var end = time_in_ms()
-    print("\nachieved tok/s: ", (pos - 1) / Int(end - start) * 1000)
+    var elapsed_ms = end - start
+    var achieved_tok_s = Float32(0.0)
+    if elapsed_ms > 0 and pos > 1:
+        achieved_tok_s = Float32(pos - 1) * Float32(1000.0) / Float32(elapsed_ms)
+
+    print("\nachieved tok/s: ", achieved_tok_s)
