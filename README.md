@@ -98,8 +98,26 @@ mojo llama2.mojo stories15M.bin -s 100 -n 256 -t 0.5 -i "Once upon a time"
 - `-t <float>` - temperature in [0,1.0] (default: 0.9)
 - `-i <string>` - input prompt
 - `-z <string>` - tokenizer path (default: tokenizer.bin)
-- `-j <int>` - number of parallel workers (default: number of performance cores)
+- `-j <int>` - maximum parallel workers (default: number of performance cores)
 - `-pc <int>` - print config (0 or 1)
+
+For repeated inference, build the executable once (Mojo builds with `-O3` by default):
+
+```bash
+mojo build llama2.mojo -o llama2
+./llama2 stories15M.bin -s 99 -n 256 -i "Once upon a time"
+```
+
+Use `-i` before the prompt; a bare trailing string is ignored by the argument parser.
+
+CPU kernels choose their worker count based on the amount of work, up to `-j`.
+Matrix multiplication and attention use at least 262,144 Float32 elements of work
+per worker; smaller operations run directly on the calling thread, and RoPE runs
+serially. This avoids paying Mojo 1.0/MAX task dispatch and synchronization costs
+for every small kernel while keeping large matrix multiplications parallel.
+The SIMD arithmetic and model precision are unchanged. Benchmark with the same
+seed, prompt, temperature, and step limit, since generation can stop at EOS before
+the requested number of steps.
 
 **example output**
 
@@ -205,5 +223,4 @@ This function takes an integer n as a parameter and returns the next Fibonacci n
 ## license
 
 MIT
-
 

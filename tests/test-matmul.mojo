@@ -343,6 +343,83 @@ def test_batch_matmul_consistency() raises:
     
     print("✓ Consistency test passed")
 
+def check_partitioned_result(C: Matrix, expected: Matrix, rows: Int, scale: Float32) raises:
+    # Guard elements catch writes outside the assigned output rows.
+    assert_equal(C[0], Float32(-999))
+    assert_equal(C[rows + 1], Float32(-999))
+    for row in range(rows):
+        assert_almost_equal(C[row + 1], expected[row] * scale, atol=0.00001)
+
+def test_partitioned_matmul(rows: Int, cols: Int, workers: Int) raises:
+    """Compare all batch sizes against a scalar reference, including SIMD tails."""
+    var A = Matrix(cols)
+    var B0 = Matrix(rows, cols)
+    var B1 = Matrix(rows, cols)
+    var B2 = Matrix(rows, cols)
+    var C0 = Matrix(rows + 2)
+    var C1 = Matrix(rows + 2)
+    var C2 = Matrix(rows + 2)
+    var expected = Matrix(rows)
+
+    for col in range(cols):
+        A[col] = Float32(col % 13 - 6) * 0.125
+    for row in range(rows):
+        var total = Float32(0)
+        for col in range(cols):
+            var value = Float32((row * 7 + col) % 17 - 8) * 0.125
+            B0[row, col] = value
+            B1[row, col] = -value
+            B2[row, col] = value * 0.5
+            total += A[col] * value
+        expected[row] = total
+    for row in range(rows + 2):
+        C0[row] = -999
+        C1[row] = -999
+        C2[row] = -999
+
+    matmul(C0.data.unsafe_offset(1), A.data, B0.data, rows, cols, workers)
+    check_partitioned_result(C0, expected, rows, 1.0)
+
+    # Reset outputs so each batch must write every row itself.
+    for row in range(rows):
+        C0[row + 1] = -999
+    batch_matmul[2](
+        StaticTuple[BufferPtrFloat32, 2](C0.data.unsafe_offset(1), C1.data.unsafe_offset(1)),
+        A.data,
+        StaticTuple[BufferPtrFloat32, 2](B0.data, B1.data),
+        rows, cols, workers,
+    )
+    check_partitioned_result(C0, expected, rows, 1.0)
+    check_partitioned_result(C1, expected, rows, -1.0)
+
+    for row in range(rows):
+        C0[row + 1] = -999
+        C1[row + 1] = -999
+    batch_matmul[3](
+        StaticTuple[BufferPtrFloat32, 3](
+            C0.data.unsafe_offset(1), C1.data.unsafe_offset(1), C2.data.unsafe_offset(1)
+        ),
+        A.data,
+        StaticTuple[BufferPtrFloat32, 3](B0.data, B1.data, B2.data),
+        rows, cols, workers,
+    )
+    check_partitioned_result(C0, expected, rows, 1.0)
+    check_partitioned_result(C1, expected, rows, -1.0)
+    check_partitioned_result(C2, expected, rows, 0.5)
+
+def test_adaptive_parallelism() raises:
+    # Tiny kernels stay serial even when many workers are requested.
+    test_partitioned_matmul(3, 17, 8)
+    test_partitioned_matmul(5, 31, 8)
+    test_partitioned_matmul(7, 33, 8)
+    # Enough work to dispatch multiple tasks; uneven rows and a SIMD tail.
+    test_partitioned_matmul(529, 1025, 1)
+    test_partitioned_matmul(529, 1025, 2)
+    test_partitioned_matmul(529, 1025, 8)
+    # A large row must still run only once, despite requesting many workers.
+    test_partitioned_matmul(1, 524289, 8)
+    print("✓ Adaptive parallel matmul matches the scalar reference")
+
 def main() raises:
     print("=" * 60)
     print("Testing matmul and batch_matmul functions")
@@ -362,8 +439,8 @@ def main() raises:
     # Validation and consistency tests
     test_matmul_dimension_validation()
     test_batch_matmul_consistency()
+    test_adaptive_parallelism()
     
     print("\n" + "=" * 60)
     print("All matmul tests passed! ✓")
     print("=" * 60)
-

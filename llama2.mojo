@@ -17,6 +17,14 @@ comptime NUM_CONFIG_INT = 7
 comptime nelts = (4 * simd_width_of[Float32]())
 comptime BufferPtrFloat32 = Pointer[Float32, MutUntrackedOrigin]
 
+# Amortize CPU task dispatch over at least 1 MiB of Float32 work per worker.
+# Small per-layer kernels otherwise spend more time synchronizing than computing.
+comptime PARALLEL_GRAIN_SIZE = 262_144
+
+@always_inline
+def parallel_worker_count(items: Int, work_per_item: Int, workers: Int) -> Int:
+    return max(1, min(workers, items, items * work_per_item // PARALLEL_GRAIN_SIZE))
+
 struct Matrix(Movable):
     var data: BufferPtrFloat32
     var allocated: Int
@@ -453,7 +461,12 @@ def batch_matmul[
         comptime for k in range(n):
             C[k].unsafe_store(i, tmp_ptr.unsafe_load[width=nelts](k * nelts).reduce_add())
 
-    parallelize(compute_row, rows, workers)
+    var num_workers = parallel_worker_count(rows, n * cols, workers)
+    if num_workers == 1:
+        for i in range(rows):
+            compute_row(i)
+    else:
+        parallelize(compute_row, rows, num_workers)
 
 @always_inline
 def matmul(C: BufferPtrFloat32, A: BufferPtrFloat32, B: BufferPtrFloat32, rows: Int, cols: Int, workers: Int) raises:
@@ -532,7 +545,9 @@ struct Transformer:
                     k_ptr[unsafe_offset=k_idx] = k0 * fcr - k1 * fci
                     k_ptr[unsafe_offset=k_idx + 1] = k0 * fci + k1 * fcr
 
-        parallelize(head_loop, config.n_heads, self.workers)
+        # RoPE only touches two vectors; dispatching tasks costs more than the work.
+        for h in range(config.n_heads):
+            head_loop(h)
 
     @always_inline
     def transformer(
@@ -634,7 +649,14 @@ struct Transformer:
                         head_size,
                     )
 
-            parallelize(loop_over_heads, config.n_heads, self.workers)
+            var attention_workers = parallel_worker_count(
+                config.n_heads, (pos + 1) * head_size, self.workers
+            )
+            if attention_workers == 1:
+                for h in range(config.n_heads):
+                    loop_over_heads(h)
+            else:
+                parallelize(loop_over_heads, config.n_heads, attention_workers)
 
             matmul(state.xb2.data, state.xb.data, weights.wo.slice(l), dim, dim, self.workers)
 
