@@ -1,3 +1,58 @@
+# Performance: persistent worker pool (after the Mojo 1.0 upgrade)
+
+The Mojo 1.0 port initially scaled badly across threads: on a 4-core box
+stories15M ran at ~100 tok/s single-threaded but only ~85 tok/s with 4
+workers (llama2.c with OpenMP: ~300-345 tok/s).
+
+## Diagnosis (per-stage timers, stories15M)
+
+- Single-threaded the forward pass is memory-bandwidth bound (~6 GB/s of
+  weights per core), same as llama2.c.
+- With 4 workers every `parallelize()` call cost ~200 us: MAX's pool threads
+  sleep between dispatches and wake slowly. The forward pass issued ~37
+  dispatches per token (RoPE alone went from 8 us to 1270 us per token), i.e.
+  ~7 ms of pure dispatch overhead on a ~10 ms token.
+- `nelts = 4 * simd_width` (64 floats on AVX-512) left a 32-element remainder
+  on every 288-wide row and burned 12 zmm accumulators; ~30% slower than 16.
+
+## Changes
+
+- `Transformer` now owns a persistent worker pool: `workers - 1` threads are
+  started once (on the first forward pass) via `std.runtime.asyncrt.TaskGroup`
+  and spin until the next token; the calling thread takes part as worker 0.
+- One forward pass = one "epoch". Every worker owns a fixed slice of rows for
+  every matmul and a fixed slice of heads for RoPE/attention; stages that need
+  the complete output of the previous stage are separated by a sense-reversing
+  spin barrier (`Atomic[DType.int]`, ~4 us). 31 barriers per token on stories15M
+  instead of 37 thread-pool dispatches.
+- The attention-rmsnorm and FFN-rmsnorm outputs are computed redundantly by
+  each worker into a private buffer (`dim` floats), which removes two barriers
+  per layer.
+- Residual adds and SiLU run on the rows the same worker just produced, so they
+  need no extra synchronization.
+- `nelts = max(16, simd_width_of[Float32]())`.
+- `batch_matmul()` / `matmul()` keep their signatures (still MAX `parallelize`
+  based, one dispatch per call) for the tests and external callers; the
+  forward pass uses the serial `matmul_rows()` inside the pool.
+- Workers are clamped to `parallelism_level()`; spin loops call `sched_yield`
+  every 4096 iterations so an oversubscribed machine still makes progress.
+- `Transformer.transformer()` is now `mut self` (starts the pool lazily) and
+  raises if it is called with a different model dimension than the first call.
+
+## Results (4 vCPU Intel Xeon Skylake VM, AVX-512, greedy decoding, 256 tokens)
+
+| Model | llama2.c 1 thread | llama2.c 4 threads (OpenMP) | llama2.mojo `-j 1` | llama2.mojo `-j 4` before | llama2.mojo `-j 4` after |
+|---|---|---|---|---|---|
+| stories15M  | 105 tok/s | 292 tok/s | 143 tok/s | 87 tok/s | **400 tok/s** |
+| stories42M  | 40 tok/s  | 117 tok/s | 51 tok/s  | 58 tok/s | **159 tok/s** |
+| stories110M | 16 tok/s  | 53 tok/s  | 21 tok/s  | 30 tok/s | **58 tok/s**  |
+
+Greedy output is byte-identical to llama2.c. At 4 threads both implementations
+sit at the VM's ~20 GB/s memory-bandwidth ceiling, so run-to-run noise of
++-10% is normal.
+
+---
+
 # Upgrade Log: Mojo 0.26 -> 1.0
 
 Toolchain: Mojo 1.0.0 (`modular` 26.5.0 from PyPI, `pip install modular`).

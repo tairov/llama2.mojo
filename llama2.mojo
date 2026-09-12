@@ -1,5 +1,9 @@
 from std.algorithm import vectorize
 from max.algorithm import parallelize
+from std.runtime.asyncrt import TaskGroup, parallelism_level
+from std.atomic import Atomic
+from std.ffi import external_call
+from std.math import ceildiv
 from std.collections import List, Dict
 from std.memory import unsafe_memset_zero, unsafe_memcpy, stack_allocation
 from std.memory import Pointer
@@ -14,7 +18,10 @@ from std import time
 
 comptime NUM_CONFIG_INT = 7
 
-comptime nelts = (4 * simd_width_of[Float32]())
+# Vector width for the kernels: at least 16 floats so narrow ISAs (NEON) still
+# get some ILP, but no wider than the native SIMD width. Wider (e.g. 4x on
+# AVX-512 = 64) leaves large remainders on 288-wide rows and was ~30% slower.
+comptime nelts = max(16, simd_width_of[Float32]())
 comptime BufferPtrFloat32 = Pointer[Float32, MutUntrackedOrigin]
 
 struct Matrix(Movable):
@@ -422,16 +429,18 @@ def softmax(x: BufferPtrFloat32, start: Int, end: Int):
     vectorize[nelts](end - start, _norm)
 
 @always_inline
-def batch_matmul[
+def matmul_rows[
     n: Int
 ](
     C: StaticTuple[BufferPtrFloat32, n],
     A: BufferPtrFloat32,
     B: StaticTuple[BufferPtrFloat32, n],
-    rows: Int,
+    row_start: Int,
+    row_end: Int,
     cols: Int,
-    workers: Int,
 ):
+    # C[k][i] = B[k][i, :] . A  for i in [row_start, row_end), k < n.
+    # Serial; callers decide how rows are split across threads.
     def compute_row(i: Int) {imm}:
         var tmp_ptr = stack_allocation[n * nelts, Float32]()
 
@@ -453,7 +462,32 @@ def batch_matmul[
         comptime for k in range(n):
             C[k].unsafe_store(i, tmp_ptr.unsafe_load[width=nelts](k * nelts).reduce_add())
 
-    parallelize(compute_row, rows, workers)
+    for i in range(row_start, row_end):
+        compute_row(i)
+
+@always_inline
+def batch_matmul[
+    n: Int
+](
+    C: StaticTuple[BufferPtrFloat32, n],
+    A: BufferPtrFloat32,
+    B: StaticTuple[BufferPtrFloat32, n],
+    rows: Int,
+    cols: Int,
+    workers: Int,
+):
+    # Standalone parallel matmul (one thread-pool dispatch per call). The
+    # forward pass uses matmul_rows() inside the persistent worker pool instead.
+    if workers <= 1:
+        matmul_rows[n](C, A, B, 0, rows, cols)
+        return
+
+    var chunk = ceildiv(rows, workers)
+
+    def compute_chunk(w: Int) {imm}:
+        matmul_rows[n](C, A, B, w * chunk, min((w + 1) * chunk, rows), cols)
+
+    parallelize(compute_chunk, workers, workers)
 
 @always_inline
 def matmul(C: BufferPtrFloat32, A: BufferPtrFloat32, B: BufferPtrFloat32, rows: Int, cols: Int, workers: Int) raises:
@@ -496,11 +530,388 @@ def axpy(dest: BufferPtrFloat32, src: BufferPtrFloat32, scale: Float32, size: In
 
     vectorize[nelts](size, axpy_kernel)
 
+@always_inline
+def silu_mul(hb: BufferPtrFloat32, hb2: BufferPtrFloat32, size: Int):
+    # hb = silu(hb) * hb2, over `size` elements
+    def silu_kernel[_nelts: Int](i: Int) {imm}:
+        var v = hb.unsafe_load[width=_nelts](i)
+        var sv = v * (1.0 / (1.0 + math.exp(-v)))
+        hb.unsafe_store[width=_nelts](i, sv * hb2.unsafe_load[width=_nelts](i))
+
+    vectorize[nelts](size, silu_kernel)
+
+@always_inline
+def rope_head(
+    q_ptr: BufferPtrFloat32,
+    k_ptr: BufferPtrFloat32,
+    freq_cis_real_row: BufferPtrFloat32,
+    freq_cis_imag_row: BufferPtrFloat32,
+    h: Int,
+    head_size: Int,
+    n_kv_heads: Int,
+):
+    # RoPE rotation of query head h (and key head h, if it exists)
+    for j in range(0, head_size, 2):
+        var fcr = freq_cis_real_row[unsafe_offset=j // 2]
+        var fci = freq_cis_imag_row[unsafe_offset=j // 2]
+
+        var q_idx = h * head_size + j
+        var q0 = q_ptr[unsafe_offset=q_idx]
+        var q1 = q_ptr[unsafe_offset=q_idx + 1]
+        q_ptr[unsafe_offset=q_idx] = q0 * fcr - q1 * fci
+        q_ptr[unsafe_offset=q_idx + 1] = q0 * fci + q1 * fcr
+
+        if h < n_kv_heads:
+            var k0 = k_ptr[unsafe_offset=q_idx]
+            var k1 = k_ptr[unsafe_offset=q_idx + 1]
+            k_ptr[unsafe_offset=q_idx] = k0 * fcr - k1 * fci
+            k_ptr[unsafe_offset=q_idx + 1] = k0 * fci + k1 * fcr
+
+# Everything one forward pass needs, as plain pointers and ints, so it can be
+# handed to the worker threads by value.
+struct ForwardArgs(ImplicitlyCopyable):
+    var token: Int
+    var pos: Int
+    var dim: Int
+    var hidden_dim: Int
+    var head_size: Int
+    var kv_dim: Int
+    var kv_mul: Int
+    var n_layers: Int
+    var n_heads: Int
+    var n_kv_heads: Int
+    var seq_len: Int
+    var vocab_size: Int
+    var x: BufferPtrFloat32
+    var xb: BufferPtrFloat32
+    var xb2: BufferPtrFloat32
+    var hb: BufferPtrFloat32
+    var hb2: BufferPtrFloat32
+    var q: BufferPtrFloat32
+    var att: BufferPtrFloat32
+    var logits: BufferPtrFloat32
+    var key_cache: BufferPtrFloat32
+    var value_cache: BufferPtrFloat32
+    var token_embedding_table: BufferPtrFloat32
+    var freq_cis_real: BufferPtrFloat32
+    var freq_cis_imag: BufferPtrFloat32
+    var rms_att_weight: BufferPtrFloat32
+    var wq: BufferPtrFloat32
+    var wk: BufferPtrFloat32
+    var wv: BufferPtrFloat32
+    var wo: BufferPtrFloat32
+    var rms_ffn_weight: BufferPtrFloat32
+    var w1: BufferPtrFloat32
+    var w2: BufferPtrFloat32
+    var w3: BufferPtrFloat32
+    var rms_final_weight: BufferPtrFloat32
+    var wcls: BufferPtrFloat32
+
+    def __init__(out self, token: Int, pos: Int, config: Config, state: RunState, weights: TransformerWeights):
+        self.token = token
+        self.pos = pos
+        self.dim = config.dim
+        self.hidden_dim = config.hidden_dim
+        self.head_size = config.head_size
+        self.kv_dim = config.kv_dim
+        self.kv_mul = config.kv_mul
+        self.n_layers = config.n_layers
+        self.n_heads = config.n_heads
+        self.n_kv_heads = config.n_kv_heads
+        self.seq_len = config.seq_len
+        self.vocab_size = config.vocab_size
+        self.x = state.x.data
+        self.xb = state.xb.data
+        self.xb2 = state.xb2.data
+        self.hb = state.hb.data
+        self.hb2 = state.hb2.data
+        self.q = state.q.data
+        self.att = state.att.data
+        self.logits = state.logits.data
+        self.key_cache = state.key_cache.data
+        self.value_cache = state.value_cache.data
+        self.token_embedding_table = weights.token_embedding_table.data
+        self.freq_cis_real = weights.freq_cis_real.data
+        self.freq_cis_imag = weights.freq_cis_imag.data
+        self.rms_att_weight = weights.rms_att_weight.data
+        self.wq = weights.wq.data
+        self.wk = weights.wk.data
+        self.wv = weights.wv.data
+        self.wo = weights.wo.data
+        self.rms_ffn_weight = weights.rms_ffn_weight.data
+        self.w1 = weights.w1.data
+        self.w2 = weights.w2.data
+        self.w3 = weights.w3.data
+        self.rms_final_weight = weights.rms_final_weight.data
+        self.wcls = weights.wcls.data
+
+@always_inline
+def chunk_start(total: Int, wid: Int, workers: Int) -> Int:
+    return min(wid * ceildiv(total, workers), total)
+
+@always_inline
+def chunk_end(total: Int, wid: Int, workers: Int) -> Int:
+    return min((wid + 1) * ceildiv(total, workers), total)
+
+@always_inline
+def spin_wait(spins: Int):
+    # Yield the core after a while so an oversubscribed machine still makes progress
+    if spins % 4096 == 4095:
+        _ = external_call["sched_yield", Int32]()
+
+# State shared by the main thread and the persistent worker threads.
+# Heap-allocated and never moved: the worker coroutines hold a pointer to it.
+struct PoolShared:
+    var workers: Int
+    var epoch: Atomic[DType.int]      # bumped once per forward pass
+    var done: Atomic[DType.int]       # workers finished with the current pass
+    var bar_count: Atomic[DType.int]  # spin barrier: arrivals
+    var bar_gen: Atomic[DType.int]    # spin barrier: generation
+    var stop: Atomic[DType.int]
+    var args: ForwardArgs
+    var xbp: BufferPtrFloat32         # per-worker private rmsnorm buffers (workers * dim)
+    var xbp_dim: Int
+    var ids: List[Int]
+
+    def __init__(out self, workers: Int, args: ForwardArgs):
+        self.workers = workers
+        self.epoch = Atomic[DType.int](0)
+        self.done = Atomic[DType.int](0)
+        self.bar_count = Atomic[DType.int](0)
+        self.bar_gen = Atomic[DType.int](0)
+        self.stop = Atomic[DType.int](0)
+        self.args = args
+        self.xbp = unsafe_alloc[Float32](workers * args.dim)
+        self.xbp_dim = args.dim
+        self.ids = List[Int]()
+        for i in range(workers):
+            self.ids.append(i)
+
+comptime PoolSharedPtr = Pointer[PoolShared, MutUntrackedOrigin]
+
+@always_inline
+def barrier(sh: PoolSharedPtr):
+    # Sense-reversing spin barrier across all workers (no-op for 1 worker)
+    if sh[].workers == 1:
+        return
+    var gen = sh[].bar_gen.load()
+    if sh[].bar_count.fetch_add(1) + 1 == sh[].workers:
+        sh[].bar_count.store(0)
+        sh[].bar_gen.store(gen + 1)
+    else:
+        var spins = 0
+        while sh[].bar_gen.load() == gen:
+            spin_wait(spins)
+            spins += 1
+
+@always_inline
+def attention_head(a: ForwardArgs, l: Int, h: Int):
+    # Single-head attention for the current position; writes xb[h*head_size:]
+    var loff = l * a.seq_len * a.kv_dim
+    var q_offset = h * a.head_size
+    var att_offset = h * a.seq_len
+    var kv_head_offset = (h // a.kv_mul) * a.head_size
+    var sqrt_head_size = math.sqrt(Float32(a.head_size))
+
+    for t in range(a.pos + 1):
+        var k_offset = loff + t * a.kv_dim + kv_head_offset
+        var score = dot(
+            a.q.unsafe_offset(q_offset),
+            a.key_cache.unsafe_offset(k_offset),
+            a.head_size,
+        )
+        a.att[unsafe_offset=att_offset + t] = score / sqrt_head_size
+
+    softmax(a.att, att_offset, att_offset + a.pos + 1)
+
+    var xb_head = a.xb.unsafe_offset(q_offset)
+    unsafe_memset_zero(xb_head, a.head_size)
+    for t in range(a.pos + 1):
+        var v_offset = loff + t * a.kv_dim + kv_head_offset
+        axpy(
+            xb_head,
+            a.value_cache.unsafe_offset(v_offset),
+            a.att[unsafe_offset=att_offset + t],
+            a.head_size,
+        )
+
+def forward_worker(a: ForwardArgs, xbp: BufferPtrFloat32, wid: Int, sh: PoolSharedPtr):
+    # One worker's share of a full forward pass. Every worker owns a fixed
+    # slice of rows (matmuls) and heads (RoPE/attention); stages that need the
+    # complete output of the previous stage are separated by a barrier.
+    var workers = sh[].workers
+    var dim = a.dim
+    var hidden_dim = a.hidden_dim
+    var kv_dim = a.kv_dim
+    var head_size = a.head_size
+
+    var d0 = chunk_start(dim, wid, workers)
+    var d1 = chunk_end(dim, wid, workers)
+    var kv0 = chunk_start(kv_dim, wid, workers)
+    var kv1 = chunk_end(kv_dim, wid, workers)
+    var f0 = chunk_start(hidden_dim, wid, workers)
+    var f1 = chunk_end(hidden_dim, wid, workers)
+    var h0 = chunk_start(a.n_heads, wid, workers)
+    var h1 = chunk_end(a.n_heads, wid, workers)
+    var v0 = chunk_start(a.vocab_size, wid, workers)
+    var v1 = chunk_end(a.vocab_size, wid, workers)
+
+    # Copy the token embedding into x
+    if wid == 0:
+        unsafe_memcpy(dest=a.x, src=a.token_embedding_table.unsafe_offset(a.token * dim), count=dim)
+    barrier(sh)
+
+    # Pluck out the "pos" row of freq_cis_real and freq_cis_imag
+    var freq_cis_real_row = a.freq_cis_real.unsafe_offset(a.pos * (head_size // 2))
+    var freq_cis_imag_row = a.freq_cis_imag.unsafe_offset(a.pos * (head_size // 2))
+
+    for l in range(a.n_layers):
+        # Attention rmsnorm: each worker computes the full (tiny) vector into
+        # its private buffer, so no barrier is needed before the QKV matmul
+        rmsnorm(xbp, a.x, a.rms_att_weight.unsafe_offset(l * dim), dim)
+
+        var k_ptr = a.key_cache.unsafe_offset(l * a.seq_len * kv_dim + a.pos * kv_dim)
+        var v_ptr = a.value_cache.unsafe_offset(l * a.seq_len * kv_dim + a.pos * kv_dim)
+        var wq = a.wq.unsafe_offset(l * dim * dim)
+        var wk = a.wk.unsafe_offset(l * kv_dim * dim)
+        var wv = a.wv.unsafe_offset(l * kv_dim * dim)
+
+        # QKV matmuls over this worker's rows
+        if kv_dim == dim:
+            matmul_rows[3](
+                StaticTuple[BufferPtrFloat32, 3](a.q, k_ptr, v_ptr),
+                xbp,
+                StaticTuple[BufferPtrFloat32, 3](wq, wk, wv),
+                d0, d1, dim,
+            )
+        else:
+            matmul_rows[1](
+                StaticTuple[BufferPtrFloat32, 1](a.q),
+                xbp,
+                StaticTuple[BufferPtrFloat32, 1](wq),
+                d0, d1, dim,
+            )
+            matmul_rows[2](
+                StaticTuple[BufferPtrFloat32, 2](k_ptr, v_ptr),
+                xbp,
+                StaticTuple[BufferPtrFloat32, 2](wk, wv),
+                kv0, kv1, dim,
+            )
+        barrier(sh)
+
+        # RoPE over this worker's heads
+        for h in range(h0, h1):
+            rope_head(a.q, k_ptr, freq_cis_real_row, freq_cis_imag_row, h, head_size, a.n_kv_heads)
+        barrier(sh)
+
+        # Multihead attention over this worker's heads
+        for h in range(h0, h1):
+            attention_head(a, l, h)
+        barrier(sh)
+
+        # Output projection + residual, over this worker's rows
+        matmul_rows[1](
+            StaticTuple[BufferPtrFloat32, 1](a.xb2),
+            a.xb,
+            StaticTuple[BufferPtrFloat32, 1](a.wo.unsafe_offset(l * dim * dim)),
+            d0, d1, dim,
+        )
+        add(a.x.unsafe_offset(d0), a.xb2.unsafe_offset(d0), d1 - d0)
+        barrier(sh)
+
+        # FFN rmsnorm (private buffer again), then w1/w3 + SiLU over this worker's rows
+        rmsnorm(xbp, a.x, a.rms_ffn_weight.unsafe_offset(l * dim), dim)
+        matmul_rows[2](
+            StaticTuple[BufferPtrFloat32, 2](a.hb, a.hb2),
+            xbp,
+            StaticTuple[BufferPtrFloat32, 2](
+                a.w1.unsafe_offset(l * hidden_dim * dim),
+                a.w3.unsafe_offset(l * hidden_dim * dim),
+            ),
+            f0, f1, dim,
+        )
+        silu_mul(a.hb.unsafe_offset(f0), a.hb2.unsafe_offset(f0), f1 - f0)
+        barrier(sh)
+
+        # w2 + residual, over this worker's rows
+        matmul_rows[1](
+            StaticTuple[BufferPtrFloat32, 1](a.xb),
+            a.hb,
+            StaticTuple[BufferPtrFloat32, 1](a.w2.unsafe_offset(l * dim * hidden_dim)),
+            d0, d1, hidden_dim,
+        )
+        add(a.x.unsafe_offset(d0), a.xb.unsafe_offset(d0), d1 - d0)
+        barrier(sh)
+
+    # Final rmsnorm + classifier over this worker's slice of the vocabulary
+    rmsnorm(xbp, a.x, a.rms_final_weight, dim)
+    matmul_rows[1](
+        StaticTuple[BufferPtrFloat32, 1](a.logits),
+        xbp,
+        StaticTuple[BufferPtrFloat32, 1](a.wcls),
+        v0, v1, dim,
+    )
+
+# Body of a persistent worker thread: wait for the next forward pass, run
+# its share, signal completion, repeat until stopped.
+struct PoolWorker(def(Int) -> None, ImplicitlyCopyable):
+    var sh: PoolSharedPtr
+
+    def __init__(out self, sh: PoolSharedPtr):
+        self.sh = sh
+
+    def __call__(self, wid: Int):
+        var seen = 0
+        while True:
+            var spins = 0
+            while self.sh[].epoch.load() == seen:
+                if self.sh[].stop.load() != 0:
+                    return
+                spin_wait(spins)
+                spins += 1
+            seen += 1
+            var a = self.sh[].args
+            forward_worker(a, self.sh[].xbp.unsafe_offset(wid * a.dim), wid, self.sh)
+            _ = self.sh[].done.fetch_add(1)
+
+async def _run_pool_worker(w: PoolWorker, wid: Int):
+    w(wid)
+
 struct Transformer:
     var workers: Int
+    var sh: PoolSharedPtr
+    var worker: Pointer[PoolWorker, MutUntrackedOrigin]
+    var tg: Pointer[TaskGroup, MutUntrackedOrigin]
+    var started: Bool
 
     def __init__(out self, workers: Int):
-        self.workers = workers
+        # Worker threads come from the runtime's pool; the calling thread is
+        # worker 0, so never ask for more threads than the pool can supply.
+        self.workers = max(1, min(workers, parallelism_level()))
+        self.sh = unsafe_alloc[PoolShared](1)
+        self.worker = unsafe_alloc[PoolWorker](1)
+        self.tg = unsafe_alloc[TaskGroup](1)
+        self.started = False
+
+    def __deinit__(deinit self):
+        if self.started:
+            self.sh[].stop.store(1)
+            self.tg[].wait()
+            self.tg.unsafe_deinit_pointee()
+            self.worker.unsafe_deinit_pointee()
+            self.sh[].xbp.unsafe_free()
+            self.sh.unsafe_deinit_pointee()
+        self.tg.unsafe_free()
+        self.worker.unsafe_free()
+        self.sh.unsafe_free()
+
+    def _start(mut self, args: ForwardArgs):
+        self.sh.unsafe_write(PoolShared(self.workers, args))
+        self.worker.unsafe_write(PoolWorker(self.sh))
+        self.tg.unsafe_write(TaskGroup())
+        for i in range(1, self.workers):
+            self.tg[].create_task(_run_pool_worker(self.worker[], self.sh[].ids[i]))
+        self.started = True
 
     @always_inline
     def rope_rotation_llama(
@@ -512,169 +923,37 @@ struct Transformer:
         config: Config,
         head_size: Int
     ):
-        def head_loop(i: Int) {imm}:
-            for j in range(0, head_size, 2):
-                var fcr = freq_cis_real_row[unsafe_offset=j // 2]
-                var fci = freq_cis_imag_row[unsafe_offset=j // 2]
+        for h in range(config.n_heads):
+            rope_head(q_ptr, k_ptr, freq_cis_real_row, freq_cis_imag_row, h, head_size, config.n_kv_heads)
 
-                # q rotation
-                var q_idx = i * head_size + j
-                var q0 = q_ptr[unsafe_offset=q_idx]
-                var q1 = q_ptr[unsafe_offset=q_idx + 1]
-                q_ptr[unsafe_offset=q_idx] = q0 * fcr - q1 * fci
-                q_ptr[unsafe_offset=q_idx + 1] = q0 * fci + q1 * fcr
-
-                # k rotation
-                if i < config.n_kv_heads:
-                    var k_idx = i * head_size + j
-                    var k0 = k_ptr[unsafe_offset=k_idx]
-                    var k1 = k_ptr[unsafe_offset=k_idx + 1]
-                    k_ptr[unsafe_offset=k_idx] = k0 * fcr - k1 * fci
-                    k_ptr[unsafe_offset=k_idx + 1] = k0 * fci + k1 * fcr
-
-        parallelize(head_loop, config.n_heads, self.workers)
-
-    @always_inline
     def transformer(
-        self,
+        mut self,
         token: Int,
         pos: Int,
         config: Config,
         mut state: RunState,
         weights: TransformerWeights,
     ) raises:
-        var dim = config.dim
-        var hidden_dim = config.hidden_dim
-        var head_size = config.head_size
-        var kv_dim = config.kv_dim
-        var kv_mul = config.kv_mul
-        var sqrt_head_size = math.sqrt(Float32(head_size))
+        var args = ForwardArgs(token, pos, config, state, weights)
+        if not self.started:
+            self._start(args)
+        elif self.sh[].xbp_dim != args.dim:
+            raise Error("Transformer was started with a different model dimension")
 
-        # Copy the token embedding into x
-        var content_row = weights.token_embedding_table.slice(token) # returns pointer to row
-        unsafe_memcpy(dest=state.x.data, src=content_row, count=dim)
+        if self.workers == 1:
+            self.sh[].args = args
+            forward_worker(args, self.sh[].xbp, 0, self.sh)
+            return
 
-        # Pluck out the "pos" row of freq_cis_real and freq_cis_imag
-        var freq_cis_real_row = weights.freq_cis_real.slice(pos)
-        var freq_cis_imag_row = weights.freq_cis_imag.slice(pos)
-
-        # Forward all the layers
-        for l in range(config.n_layers):
-            # Attention rmsnorm
-            rmsnorm(state.xb.data, state.x.data, weights.rms_att_weight.slice(l), dim)
-
-            # QKV matmuls
-            var loff = l * config.seq_len * config.kv_dim
-
-            # Get pointers to key/value cache for this layer/pos
-            var k_ptr = state.key_cache.slice(l, pos)
-            var v_ptr = state.value_cache.slice(l, pos)
-
-            if kv_dim == dim:
-                batch_matmul[3](
-                    StaticTuple[BufferPtrFloat32, 3](
-                        state.q.data, k_ptr, v_ptr
-                    ),
-                    state.xb.data,
-                    StaticTuple[BufferPtrFloat32, 3](
-                        weights.wq.slice(l),
-                        weights.wk.slice(l),
-                        weights.wv.slice(l),
-                    ),
-                    dim,
-                    dim,
-                    self.workers,
-                )
-            else:
-                matmul(state.q.data, state.xb.data, weights.wq.slice(l), dim, dim, self.workers)
-                batch_matmul[2](
-                    StaticTuple[BufferPtrFloat32, 2](
-                        k_ptr, v_ptr
-                    ),
-                    state.xb.data,
-                    StaticTuple[BufferPtrFloat32, 2](
-                        weights.wk.slice(l),
-                        weights.wv.slice(l),
-                    ),
-                    kv_dim,
-                    dim,
-                    self.workers,
-                )
-
-            # Apply RoPE rotation
-            self.rope_rotation_llama(state.q.data, k_ptr, freq_cis_real_row, freq_cis_imag_row, config, head_size)
-
-            unsafe_memset_zero(state.xb.data, state.xb.size())
-
-            # Multihead attention
-            def loop_over_heads(h: Int) {imm}:
-                var q_offset = h * head_size
-                var att_offset = h * config.seq_len
-
-                for t in range(pos + 1):
-                    var k_offset = loff + t * kv_dim + (h // kv_mul) * head_size
-                    var score = dot(
-                        state.q.data.unsafe_offset(q_offset),
-                        state.key_cache.data.unsafe_offset(k_offset),
-                        head_size,
-                    )
-                    score /= sqrt_head_size
-                    state.att.data[unsafe_offset=att_offset + t] = score
-
-                softmax(state.att.data, att_offset, att_offset + pos + 1)
-
-                var xb_offset = h * head_size
-                for t in range(pos + 1):
-                    var v_offset = loff + t * kv_dim + (h // kv_mul) * head_size
-                    var a = state.att.data[unsafe_offset=att_offset + t]
-                    axpy(
-                        state.xb.data.unsafe_offset(xb_offset),
-                        state.value_cache.data.unsafe_offset(v_offset),
-                        a,
-                        head_size,
-                    )
-
-            parallelize(loop_over_heads, config.n_heads, self.workers)
-
-            matmul(state.xb2.data, state.xb.data, weights.wo.slice(l), dim, dim, self.workers)
-
-            # Residual connection
-            add(state.x.data, state.xb2.data, dim)
-
-            # FFN rmsnorm
-            rmsnorm(state.xb.data, state.x.data, weights.rms_ffn_weight.slice(l), dim)
-
-            batch_matmul[2](
-                StaticTuple[BufferPtrFloat32, 2](state.hb.data, state.hb2.data),
-                state.xb.data,
-                StaticTuple[BufferPtrFloat32, 2](
-                    weights.w1.slice(l),
-                    weights.w3.slice(l),
-                ),
-                hidden_dim,
-                dim,
-                self.workers,
-            )
-
-            def silu[_nelts: Int](i: Int) {imm}:
-                var initial_hb = state.hb.data.unsafe_load[width=_nelts](i)
-                var hbi = initial_hb * (1.0 / (1.0 + math.exp(-initial_hb)))
-                state.hb.data.unsafe_store[width=_nelts](
-                    i, hbi * state.hb2.data.unsafe_load[width=_nelts](i)
-                )
-
-            vectorize[nelts](hidden_dim, silu)
-
-            matmul(state.xb.data, state.hb.data, weights.w2.slice(l), dim, hidden_dim, self.workers)
-
-            # Residual connection
-            add(state.x.data, state.xb.data, dim)
-
-        # Final rmsnorm
-        rmsnorm(state.x.data, state.x.data, weights.rms_final_weight.data, dim)
-
-        # Classifier into logits
-        matmul(state.logits.data, state.x.data, weights.wcls.data, config.vocab_size, dim, self.workers)
+        # Publish the pass, take part as worker 0, then wait for the others
+        self.sh[].args = args
+        self.sh[].done.store(0)
+        _ = self.sh[].epoch.fetch_add(1)
+        forward_worker(args, self.sh[].xbp, 0, self.sh)
+        var spins = 0
+        while self.sh[].done.load() < self.workers - 1:
+            spin_wait(spins)
+            spins += 1
 
 def argmax(v: BufferPtrFloat32, size: Int) -> Int:
     var max_i: Int = 0
