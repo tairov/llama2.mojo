@@ -1,6 +1,6 @@
 # Optimizing the Mojo 1.0 port — agent experiments
 
-After `llama2.mojo` was migrated to Mojo 1.0 (PR #101, Claude Fable 5.1), the
+After `llama2.mojo` was migrated to Mojo 1.0 ([PR #101](https://github.com/tairov/llama2.mojo/pull/101), Claude Fable 5.1), the
 code compiled and produced correct output but multi-threaded inference got
 slower than single-threaded: on a 4-core box stories15M ran at ~100 tok/s with
 `-j 1` and ~85 tok/s with `-j 4`, while llama2.c with OpenMP did ~300.
@@ -17,7 +17,7 @@ same migrated code, the same `run-tests.sh`, and the stories 15M/42M/110M models
   ~200 µs on the VPS, and the forward pass issued ~37 calls per token
   (6 per layer + classifier). That is ~7 ms of overhead on a ~10 ms token.
 
-## Attempt 1 — PR #103, Codex (Astr-6, extra-high reasoning)
+## Attempt 1 — [PR #103](https://github.com/tairov/llama2.mojo/pull/103), Codex (Astr-6, extra-high reasoning)
 
 *Avoid the dispatches.* Adds `parallel_worker_count()`: a kernel only gets a
 thread-pool dispatch when each worker would have ≥ 262,144 floats of work;
@@ -25,7 +25,7 @@ otherwise it runs inline on the calling thread. RoPE is always serial. On
 stories15M that leaves exactly one dispatch per token (the 32000×288
 classifier). ~25 lines, no new machinery, plus a scalar-reference matmul test.
 
-## Attempt 2 — PR #102, Claude (Fable 5.1)
+## Attempt 2 — [PR #102](https://github.com/tairov/llama2.mojo/pull/102), Claude (Fable 5.1)
 
 *Make synchronization cheap instead.* `Transformer` starts `workers - 1`
 persistent threads once (via `std.runtime.asyncrt.TaskGroup`); the calling
@@ -45,7 +45,7 @@ byte-identical between both PRs and llama2.c.
 
 **Ubuntu 26.04 VPS, 4 vCPU Intel Xeon Skylake (AVX-512), Mojo 1.0.0**
 
-| Model | master (#101) `-j 4` | llama2.c OpenMP 4 thr | PR #103 `-j 4` | PR #102 `-j 4` | #102 vs #103 |
+| Model | master (#101) `-j 4` | llama2.c OpenMP 4 thr | [PR #103](https://github.com/tairov/llama2.mojo/pull/103) `-j 4` | [PR #102](https://github.com/tairov/llama2.mojo/pull/102) `-j 4` | #102 vs #103 |
 |---|---:|---:|---:|---:|---:|
 | 15M  | 87 | 292 | 138 | **327–400** | 2.4× |
 | 42M  | 58 | 117 | 63  | **150** | 2.4× |
@@ -57,7 +57,7 @@ is the `nelts` change. With 4 threads both llama2.c and #102 sit at the VM's
 
 **Apple M1 Max, Mojo 1.0.0, 8 workers**
 
-| Model | PR #102 | PR #103 | Gain |
+| Model | [PR #102](https://github.com/tairov/llama2.mojo/pull/102) | [PR #103](https://github.com/tairov/llama2.mojo/pull/103) | Gain |
 |---|---:|---:|---:|
 | 15M  | 1,283 tok/s | 947 tok/s | 36% |
 | 42M  | 506 tok/s   | 330 tok/s | 53% |
