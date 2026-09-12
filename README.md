@@ -39,6 +39,14 @@ At the moment, the following models were successfully executed via `llama2.mojo`
 | stories110M.bin | 102 tok/s                                                           | 195 tok/s                      | 187 tok/s       | -                                                | 
 | TinyLlama-1.1B  | -                                                                   | 23 tok/s                       | -               | -                                                | 
 
+**Ubuntu 26.04, 4 vCPU Intel Xeon (Skylake, AVX-512) VM, Mojo 1.0.0**
+
+| Model           | [llama2.c](https://github.com/karpathy/llama2.c) (OMP, 4 threads) | **llama2.mojo** (`-j 4`) | llama2.mojo (`-j 1`) | llama2.c (1 thread) |
+|-----------------|--------------------------------------------------------------------|--------------------------|----------------------|---------------------|
+| stories15M.bin  | 292 tok/s                                                          | 400 tok/s                | 143 tok/s            | 105 tok/s           |
+| stories42M.bin  | 117 tok/s                                                          | 159 tok/s                | 51 tok/s             | 40 tok/s            |
+| stories110M.bin | 53 tok/s                                                           | 58 tok/s                 | 21 tok/s             | 16 tok/s            |
+
 **Ubuntu 20.04, Intel(R) Core(TM) i7-8700 CPU @ 3.20GHz, 6 cores, 12 threads**
 
 | Model           | [llama2.c](https://github.com/karpathy/llama2.c) (OMP/parallelized) | **llama2.mojo** (parallelized) | llama2.mojo (naive matmul) | [llama2.py](https://github.com/tairov/llama2.py) |
@@ -98,7 +106,7 @@ mojo llama2.mojo stories15M.bin -s 100 -n 256 -t 0.5 -i "Once upon a time"
 - `-t <float>` - temperature in [0,1.0] (default: 0.9)
 - `-i <string>` - input prompt
 - `-z <string>` - tokenizer path (default: tokenizer.bin)
-- `-j <int>` - number of parallel workers (default: number of performance cores)
+- `-j <int>` - number of parallel workers (default: number of performance cores). Workers are persistent threads that spin between tokens, so don't ask for more than you have cores.
 - `-pc <int>` - print config (0 or 1)
 
 **example output**
