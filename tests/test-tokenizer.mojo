@@ -1,7 +1,7 @@
-from testing import assert_true, assert_equal
+from std.testing import assert_true, assert_equal
 from llama2 import Tokenizer, bpe_encode
 
-fn test_tokenizer() raises:
+def test_tokenizer() raises:
     """Test loading Tokenizer from tokenizer.bin."""
     print("\nTesting Tokenizer loading:")
     
@@ -22,9 +22,9 @@ fn test_tokenizer() raises:
     
     # Test some common tokens exist
     # Token 0 is usually unknown/padding, token 1 is BOS, token 2 is EOS
-    assert_true(len(tok.vocab[0]) >= 0, "Token 0 should exist")
-    assert_true(len(tok.vocab[1]) >= 0, "Token 1 (BOS) should exist")
-    assert_true(len(tok.vocab[2]) >= 0, "Token 2 (EOS) should exist")
+    assert_true(tok.vocab[0].byte_length() >= 0, "Token 0 should exist")
+    assert_true(tok.vocab[1].byte_length() >= 0, "Token 1 (BOS) should exist")
+    assert_true(tok.vocab[2].byte_length() >= 0, "Token 2 (EOS) should exist")
     
     # Print a few sample tokens
     print("\n  Sample tokens:")
@@ -33,7 +33,7 @@ fn test_tokenizer() raises:
     
     print("✓ Tokenizer loading test passed!")
 
-fn test_tokenizer_find() raises:
+def test_tokenizer_find() raises:
     """Test the find method of Tokenizer."""
     print("\nTesting Tokenizer.find() method:")
     
@@ -84,7 +84,7 @@ fn test_tokenizer_find() raises:
     
     print("✓ Tokenizer.find() test passed!")
 
-fn test_bpe_encode_empty() raises:
+def test_bpe_encode_empty() raises:
     """Test BPE encoding with an empty string."""
     print("\nTesting bpe_encode with empty string:")
     
@@ -101,7 +101,7 @@ fn test_bpe_encode_empty() raises:
     
     print("✓ Empty string encoding passed")
 
-fn test_bpe_encode_consistency() raises:
+def test_bpe_encode_consistency() raises:
     """Test that encoding the same text produces the same tokens."""
     print("\nTesting bpe_encode consistency:")
     
@@ -131,7 +131,7 @@ fn test_bpe_encode_consistency() raises:
     else:
         print("⚠ Skipped - text not in vocabulary")
 
-fn test_bpe_encode_behavior() raises:
+def test_bpe_encode_behavior() raises:
     """Test that BPE encoding produces reasonable output."""
     print("\nTesting bpe_encode general behavior:")
     
@@ -165,7 +165,7 @@ fn test_bpe_encode_behavior() raises:
     
     print("✓ General behavior test passed")
 
-fn test_bpe_encode_merging_behavior() raises:
+def test_bpe_encode_merging_behavior() raises:
     """Test BPE merging behavior with tokens that should merge."""
     print("\nTesting BPE merging behavior:")
     
@@ -190,12 +190,12 @@ fn test_bpe_encode_merging_behavior() raises:
         
         # The important thing is that BPE runs without errors
         assert_true(len(tokens) >= 1, "Should produce at least 1 token")
-        assert_true(len(tokens) <= len(test_text), "Should not exceed input length")
+        assert_true(len(tokens) <= test_text.byte_length(), "Should not exceed input length")
         print("✓ Merging behavior test passed")
     else:
         print("⚠ Skipped - text not in vocabulary")
 
-fn test_bpe_encode_valid_output() raises:
+def test_bpe_encode_valid_output() raises:
     """Test that BPE encoding produces valid token IDs."""
     print("\nTesting bpe_encode produces valid output:")
     
@@ -222,7 +222,7 @@ fn test_bpe_encode_valid_output() raises:
     else:
         print("⚠ Skipped - text not in vocabulary")
 
-fn main() raises:
+def main() raises:
     print("=" * 60)
     print("Testing Tokenizer and BPE encoding")
     print("=" * 60)

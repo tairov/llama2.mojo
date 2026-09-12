@@ -1,8 +1,8 @@
-from testing import assert_true, assert_almost_equal, assert_equal
+from std.testing import assert_true, assert_almost_equal, assert_equal
 from llama2 import nelts, Config, Tokenizer, str_concat, string_compare, wrap, string_from_bytes, TransformerWeights, RunState, Matrix
-import os
+from std import os
 
-fn file_exists(path: String) -> Bool:
+def file_exists(path: String) -> Bool:
     try:
         with open(path, "r") as _:
             pass
@@ -10,22 +10,22 @@ fn file_exists(path: String) -> Bool:
     except:
         return False
 
-fn resolve_model_path() -> String:
+def resolve_model_path() -> String:
     if file_exists("stories15M.bin"):
         return "stories15M.bin"
 
     var home = os.getenv("HOME")
-    if len(home) > 0:
+    if home.byte_length() > 0:
         var home_model = home + "/projects/opensource/models/stories15M.bin"
         if file_exists(home_model):
             return home_model
 
     return ""
 
-fn test_config() raises:
+def test_config() raises:
     # Test loading Config from stories15M.bin
     var model_path = resolve_model_path()
-    if len(model_path) == 0:
+    if model_path.byte_length() == 0:
         print("Skipping Config test: stories15M.bin not found")
         return
     var config = Config(model_path, False)
@@ -60,7 +60,7 @@ fn test_config() raises:
     
     print("✓ Config test passed!")
 
-fn test_str_concat() raises:
+def test_str_concat() raises:
     # Test string concatenation
     print("\nTesting str_concat():")
     
@@ -86,7 +86,7 @@ fn test_str_concat() raises:
     
     print("✓ str_concat() test passed!")
 
-fn test_string_compare() raises:
+def test_string_compare() raises:
     # Test string comparison
     print("\nTesting string_compare():")
     
@@ -112,7 +112,7 @@ fn test_string_compare() raises:
     
     print("✓ string_compare() test passed!")
 
-fn test_wrap() raises:
+def test_wrap() raises:
     # Test wrap function for escape sequences
     print("\nTesting wrap():")
     
@@ -142,7 +142,7 @@ fn test_wrap() raises:
     
     print("✓ wrap() test passed!")
 
-fn test_string_from_bytes() raises:
+def test_string_from_bytes() raises:
     # Test string_from_bytes function
     print("\nTesting string_from_bytes():")
     
@@ -158,7 +158,7 @@ fn test_string_from_bytes() raises:
     print("  string_from_bytes([72, 101, 108, 108, 111]) = <string object>")
     # Note: Direct string comparison fails due to internal string construction
     # We verify it's a valid string by checking length instead
-    assert_true(len(str1) > 0, "Non-empty bytes should produce non-empty string")
+    assert_true(str1.byte_length() > 0, "Non-empty bytes should produce non-empty string")
     
     var bytes2 = List[UInt8]()
     bytes2.append(65)   # A
@@ -166,7 +166,7 @@ fn test_string_from_bytes() raises:
     bytes2.append(67)   # C
     var str2 = string_from_bytes(bytes2^)
     print("  string_from_bytes([65, 66, 67]) = <string object>")
-    assert_true(len(str2) > 0, "Non-empty bytes should produce non-empty string")
+    assert_true(str2.byte_length() > 0, "Non-empty bytes should produce non-empty string")
     
     var bytes3 = List[UInt8]()
     bytes3.append(49)   # 1
@@ -174,20 +174,20 @@ fn test_string_from_bytes() raises:
     bytes3.append(51)   # 3
     var str3 = string_from_bytes(bytes3^)
     print("  string_from_bytes([49, 50, 51]) = <string object>")
-    assert_true(len(str3) > 0, "Non-empty bytes should produce non-empty string")
+    assert_true(str3.byte_length() > 0, "Non-empty bytes should produce non-empty string")
     
     print("  Note: string_from_bytes is used internally by Tokenizer for loading vocab")
     print("  It works correctly in that context as verified by test_tokenizer()")
     
     print("✓ string_from_bytes() test passed!")
 
-fn test_transformer_weights() raises:
+def test_transformer_weights() raises:
     # Test loading TransformerWeights from checkpoint file
     print("\nTesting TransformerWeights:")
     
     # First load the config
     var model_path = resolve_model_path()
-    if len(model_path) == 0:
+    if model_path.byte_length() == 0:
         print("Skipping TransformerWeights test: stories15M.bin not found")
         return
     var config = Config(model_path, False)
@@ -206,13 +206,13 @@ fn test_transformer_weights() raises:
     
     print("✓ TransformerWeights test passed!")
 
-fn test_run_state() raises:
+def test_run_state() raises:
     # Test creating RunState with a config
     print("\nTesting RunState:")
     
     # Load config first
     var model_path = resolve_model_path()
-    if len(model_path) == 0:
+    if model_path.byte_length() == 0:
         print("Skipping RunState test: stories15M.bin not found")
         return
     var config = Config(model_path, False)
@@ -261,7 +261,7 @@ fn test_run_state() raises:
     
     print("✓ RunState test passed!")
 
-fn test_matrix_1d() raises:
+def test_matrix_1d() raises:
     # Test 1D matrix (vector)
     print("\nTesting Matrix 1D:")
     
@@ -296,7 +296,7 @@ fn test_matrix_1d() raises:
     
     print("✓ Matrix 1D test passed!")
 
-fn test_matrix_2d() raises:
+def test_matrix_2d() raises:
     # Test 2D matrix
     print("\nTesting Matrix 2D:")
     
@@ -331,7 +331,7 @@ fn test_matrix_2d() raises:
     
     print("✓ Matrix 2D test passed!")
 
-fn test_matrix_3d() raises:
+def test_matrix_3d() raises:
     # Test 3D matrix (with layers)
     print("\nTesting Matrix 3D:")
     
@@ -362,7 +362,7 @@ fn test_matrix_3d() raises:
     
     print("✓ Matrix 3D test passed!")
 
-fn test_matrix_slice() raises:
+def test_matrix_slice() raises:
     # Test Matrix slice methods
     print("\nTesting Matrix slice methods:")
     
@@ -453,7 +453,7 @@ fn test_matrix_slice() raises:
     print("    ✓ Modifying original affects row slice")
     
 
-fn main() raises:
+def main() raises:
     test_matrix_1d()
     test_matrix_2d()
     test_matrix_3d()
