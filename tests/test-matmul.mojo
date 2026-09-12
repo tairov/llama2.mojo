@@ -1,8 +1,8 @@
-from testing import assert_true, assert_almost_equal, assert_equal
+from std.testing import assert_true, assert_almost_equal, assert_equal
 from llama2 import Matrix, matmul, batch_matmul, BufferPtrFloat32
-from utils import StaticTuple
+from std.utils import StaticTuple
 
-fn test_matmul_basic() raises:
+def test_matmul_basic() raises:
     """Test basic matrix-vector multiplication."""
     print("\nTesting basic matmul:")
     
@@ -50,7 +50,7 @@ fn test_matmul_basic() raises:
     
     print("✓ Basic matmul test passed")
 
-fn test_matmul_all_ones() raises:
+def test_matmul_all_ones() raises:
     """Test matmul with all ones."""
     print("\nTesting matmul with all ones:")
     
@@ -79,7 +79,7 @@ fn test_matmul_all_ones() raises:
     
     print("✓ Matmul with all ones test passed")
 
-fn test_matmul_larger() raises:
+def test_matmul_larger() raises:
     """Test matmul with larger matrices."""
     print("\nTesting matmul with larger matrices:")
     
@@ -113,7 +113,7 @@ fn test_matmul_larger() raises:
     
     print("✓ Larger matmul test passed")
 
-fn test_matmul_zero() raises:
+def test_matmul_zero() raises:
     """Test matmul with zero vector."""
     print("\nTesting matmul with zero vector:")
     
@@ -142,7 +142,7 @@ fn test_matmul_zero() raises:
     
     print("✓ Matmul with zero vector test passed")
 
-fn test_batch_matmul_single() raises:
+def test_batch_matmul_single() raises:
     """Test batch_matmul with n=1 (equivalent to regular matmul)."""
     print("\nTesting batch_matmul with single matrix (n=1):")
     
@@ -156,7 +156,7 @@ fn test_batch_matmul_single() raises:
     
     for row in range(3):
         for col in range(4):
-            B[row, col] = Float32(row == col)  # Identity-like
+            B[row, col] = Float32(1.0) if row == col else Float32(0.0)  # Identity-like
     
     var C_tuple = StaticTuple[BufferPtrFloat32, 1](C.data)
     var B_tuple = StaticTuple[BufferPtrFloat32, 1](B.data)
@@ -174,7 +174,7 @@ fn test_batch_matmul_single() raises:
     
     print("✓ Batch matmul with n=1 test passed")
 
-fn test_batch_matmul_two() raises:
+def test_batch_matmul_two() raises:
     """Test batch_matmul with n=2."""
     print("\nTesting batch_matmul with two matrices (n=2):")
     
@@ -220,7 +220,7 @@ fn test_batch_matmul_two() raises:
     
     print("✓ Batch matmul with n=2 test passed")
 
-fn test_batch_matmul_three() raises:
+def test_batch_matmul_three() raises:
     """Test batch_matmul with n=3."""
     print("\nTesting batch_matmul with three matrices (n=3):")
     
@@ -276,7 +276,7 @@ fn test_batch_matmul_three() raises:
     
     print("✓ Batch matmul with n=3 test passed")
 
-fn test_matmul_dimension_validation() raises:
+def test_matmul_dimension_validation() raises:
     """Test that matmul works with correct dimensions."""
     print("\nTesting matmul dimension handling:")
     
@@ -295,7 +295,7 @@ fn test_matmul_dimension_validation() raises:
     
     for row in range(2):
         for col in range(4):
-            B[row, col] = Float32(row == col)  # Identity-like
+            B[row, col] = Float32(1.0) if row == col else Float32(0.0)  # Identity-like
     
     matmul(C.data, A.data, B.data, 2, 4, 1)
     
@@ -309,7 +309,7 @@ fn test_matmul_dimension_validation() raises:
     
     print("✓ Dimension handling test passed")
 
-fn test_batch_matmul_consistency() raises:
+def test_batch_matmul_consistency() raises:
     """Test that batch_matmul with n=1 produces same result as matmul."""
     print("\nTesting batch_matmul consistency with matmul:")
     
@@ -343,7 +343,7 @@ fn test_batch_matmul_consistency() raises:
     
     print("✓ Consistency test passed")
 
-fn main() raises:
+def main() raises:
     print("=" * 60)
     print("Testing matmul and batch_matmul functions")
     print("=" * 60)

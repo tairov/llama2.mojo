@@ -1,10 +1,10 @@
-from testing import assert_true, assert_almost_equal, assert_equal
+from std.testing import assert_true, assert_almost_equal, assert_equal
 from llama2 import Matrix, Config, RunState, TransformerWeights, Transformer
-from sys.info import num_performance_cores
-import math
-import os
+from std.sys.info import num_performance_cores
+from std import math
+from std import os
 
-fn file_exists(path: String) -> Bool:
+def file_exists(path: String) -> Bool:
     try:
         with open(path, "r") as _:
             pass
@@ -12,25 +12,25 @@ fn file_exists(path: String) -> Bool:
     except:
         return False
 
-fn resolve_model_path() -> String:
+def resolve_model_path() -> String:
     if file_exists("stories15M.bin"):
         return "stories15M.bin"
 
     var home = os.getenv("HOME")
-    if len(home) > 0:
+    if home.byte_length() > 0:
         var home_model = home + "/projects/opensource/models/stories15M.bin"
         if file_exists(home_model):
             return home_model
 
     return ""
 
-fn test_rope_rotation() raises:
+def test_rope_rotation() raises:
     """Test RoPE rotation on query and key vectors."""
     print("\nTesting RoPE rotation:")
     
     # Create config and state
     var config_file = resolve_model_path()
-    if len(config_file) == 0:
+    if config_file.byte_length() == 0:
         print("  Skipping: stories15M.bin not found")
         return
     var config = Config(config_file, False)
@@ -122,7 +122,7 @@ fn test_rope_rotation() raises:
     
     print("\n✓ All RoPE rotation tests passed")
 
-fn test_transformer() raises:
+def test_transformer() raises:
     """Test transformer forward pass with real model."""
     print("\nTesting transformer forward pass:")
     
@@ -189,7 +189,7 @@ fn test_transformer() raises:
     
     print("\n✓ All transformer tests passed")
 
-fn main() raises:
+def main() raises:
     print("=" * 60)
     print("Testing RoPE rotation and transformer functions")
     print("=" * 60)

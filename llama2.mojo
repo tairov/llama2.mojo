@@ -1,137 +1,145 @@
-from algorithm import vectorize, parallelize
-from collections import List, Dict
-from memory import memset_zero, memcpy, stack_allocation
-from memory import UnsafePointer, alloc
-from utils import StaticTuple
-from sys import argv
-from sys.param_env import env_get_int
-from sys.terminate import exit
-from sys.info import simd_width_of, size_of, num_performance_cores
-import math
-import os
-import random
-import time
+from std.algorithm import vectorize
+from max.algorithm import parallelize
+from std.collections import List, Dict
+from std.memory import unsafe_memset_zero, unsafe_memcpy, stack_allocation
+from std.memory import Pointer
+from std.memory.alloc import unsafe_alloc
+from std.utils import StaticTuple
+from std.sys import argv
+from std.sys.info import simd_width_of, size_of, num_performance_cores
+from std import math
+from std import os
+from std import random
+from std import time
 
 comptime NUM_CONFIG_INT = 7
 
 comptime nelts = (4 * simd_width_of[Float32]())
-comptime BufferPtrFloat32 = UnsafePointer[Float32, MutExternalOrigin]
+comptime BufferPtrFloat32 = Pointer[Float32, MutUntrackedOrigin]
 
 struct Matrix(Movable):
     var data: BufferPtrFloat32
     var allocated: Int
     var dims: List[Int]
 
-    fn __init__(out self, *dims: Int):
-        self.data = BufferPtrFloat32()
-        self.allocated = 0
+    # Owning constructors. Mojo 1.0 miscompiles a variadic `*dims: Int`
+    # initializer here (garbage dims when many fields are built in one
+    # __init__), so the 1/2/3-dim forms are spelled out explicitly.
+    def __init__(out self, d0: Int):
         self.dims = List[Int]()
-        for i in range(len(dims)):
-            self.dims.append(dims[i])
-        self.alloc()
+        self.dims.append(d0)
+        self.data = unsafe_alloc[Float32](d0)
+        self.allocated = 1
+
+    def __init__(out self, d0: Int, d1: Int):
+        self.dims = List[Int]()
+        self.dims.append(d0)
+        self.dims.append(d1)
+        self.data = unsafe_alloc[Float32](d0 * d1)
+        self.allocated = 1
+
+    def __init__(out self, d0: Int, d1: Int, d2: Int):
+        self.dims = List[Int]()
+        self.dims.append(d0)
+        self.dims.append(d1)
+        self.dims.append(d2)
+        self.data = unsafe_alloc[Float32](d0 * d1 * d2)
+        self.allocated = 1
 
     # Constructor for creating views/slices without allocation
-    fn __init__(out self, ptr: BufferPtrFloat32, *dims: Int):
-        self.data = ptr
-        self.allocated = 0
-        self.dims = List[Int]()
-        for i in range(len(dims)):
-            self.dims.append(dims[i])
-
-    # Constructor for variadic dims from List
-    fn __init__(out self, ptr: BufferPtrFloat32, var dims: List[Int]):
+    def __init__(out self, ptr: BufferPtrFloat32, var dims: List[Int]):
         self.data = ptr
         self.allocated = 0
         self.dims = dims^
 
     @always_inline
-    fn alloc(mut self, fill: Int = 0):
-        self.data = alloc[Float32](self.size())
+    def alloc(mut self, fill: Int = 0):
+        self.data = unsafe_alloc[Float32](self.size())
         self.allocated = 1
         if fill == 1:
             self.zero()
 
     @always_inline
-    fn size(self) -> Int:
+    def size(self) -> Int:
         var s = 1
         for i in range(len(self.dims)):
             s *= self.dims[i]
         return s
 
     @always_inline
-    fn alloc_zero(mut self):
+    def alloc_zero(mut self):
         self.alloc(1)
 
     @always_inline
-    fn zero(mut self):
-        memset_zero(self.data, self.size())
+    def zero(mut self):
+        unsafe_memset_zero(self.data, self.size())
 
     @always_inline
-    fn set_buf_ptr(mut self, ptr: BufferPtrFloat32):
+    def set_buf_ptr(mut self, ptr: BufferPtrFloat32):
         self.data = ptr
 
     @always_inline
-    fn __getitem__(self, x: Int) -> Float32:
-        return self.data[x]
+    def __getitem__(self, x: Int) -> Float32:
+        return self.data[unsafe_offset=x]
 
     @always_inline
-    fn __getitem__(self, y: Int, x: Int) -> Float32:
+    def __getitem__(self, y: Int, x: Int) -> Float32:
         # 2D access: y * cols + x
-        return self.data[y * self.dims[len(self.dims)-1] + x]
+        return self.data[unsafe_offset=y * self.dims[len(self.dims)-1] + x]
 
     @always_inline
-    fn __getitem__(self, z: Int, y: Int, x: Int) -> Float32:
+    def __getitem__(self, z: Int, y: Int, x: Int) -> Float32:
         # 3D access: z * (rows * cols) + y * cols + x
         var cols = self.dims[len(self.dims)-1]
         var rows = self.dims[len(self.dims)-2]
-        return self.data[z * (rows * cols) + y * cols + x]
+        return self.data[unsafe_offset=z * (rows * cols) + y * cols + x]
 
     @always_inline
-    fn __setitem__(self, x: Int, val: Float32):
-        self.data[x] = val
+    def __setitem__(self, x: Int, val: Float32):
+        self.data[unsafe_offset=x] = val
 
     @always_inline
-    fn __setitem__(self, y: Int, x: Int, val: Float32):
-        self.data[y * self.dims[len(self.dims)-1] + x] = val
+    def __setitem__(self, y: Int, x: Int, val: Float32):
+        self.data[unsafe_offset=y * self.dims[len(self.dims)-1] + x] = val
 
     @always_inline
-    fn rank(self) -> Int:
+    def rank(self) -> Int:
         return len(self.dims)
 
     # Slice method: return UnsafePointer for a specific layer/row depending on rank
     @always_inline
-    fn slice(self, idx: Int) -> BufferPtrFloat32:
+    def slice(self, idx: Int) -> BufferPtrFloat32:
         # If 3D (rank 3), slice the first dim (layer) -> offset = idx * rows * cols
         # If 2D (rank 2), slice the first dim (row) -> offset = idx * cols
         # If 1D (rank 1), slice the element -> offset = idx
         if len(self.dims) > 2:
              var stride = self.dims[1] * self.dims[2]
-             return self.data + idx * stride
+             return self.data.unsafe_offset(idx * stride)
         elif len(self.dims) > 1:
-             return self.data + idx * self.dims[1]
+             return self.data.unsafe_offset(idx * self.dims[1])
         else:
-             return self.data + idx
+             return self.data.unsafe_offset(idx)
 
     # Slice method: return UnsafePointer for a specific layer and row
     # This assumes standard 3D mapping or 2D mapping where layer=0
     @always_inline
-    fn slice(self, idx1: Int, idx2: Int) -> BufferPtrFloat32:
+    def slice(self, idx1: Int, idx2: Int) -> BufferPtrFloat32:
         var cols = self.dims[len(self.dims)-1]
         var rows = self.dims[len(self.dims)-2]
         var offset = idx1 * rows * cols + idx2 * cols
-        return self.data + offset
+        return self.data.unsafe_offset(offset)
 
     @always_inline
-    fn dim(self, idx: Int) -> Int:
+    def dim(self, idx: Int) -> Int:
         if idx < len(self.dims):
             return self.dims[idx]
         return 0
 
     @always_inline
-    fn num_elements(self) -> Int:
+    def num_elements(self) -> Int:
         return self.size()
 
-fn wrap(token: String) -> String:
+def wrap(token: String) -> String:
     comptime a = String("\\n")
     comptime b = String("\\t")
     comptime c = String("'")
@@ -147,17 +155,17 @@ fn wrap(token: String) -> String:
 
     return token
 
-fn str_concat(a: String, b: String) -> String:
+def str_concat(a: String, b: String) -> String:
     return a + b
 
-fn string_compare(a: String, b: String) -> Int:
+def string_compare(a: String, b: String) -> Int:
     if a < b:
         return -1
     if a > b:
         return 1
     return 0
 
-fn string_from_bytes(var bytes: List[UInt8]) -> String:
+def string_from_bytes(var bytes: List[UInt8]) -> String:
     var result = String("")
     for i in range(len(bytes)):
         result += chr(Int(bytes[i]))
@@ -170,13 +178,11 @@ struct Tokenizer:
     var vocab_size: Int
     var map_vocab_to_index: Dict[String, Int]
 
-    fn __init__(out self, vocab_size: Int, filename: String) raises:
+    def __init__(out self, vocab_size: Int, filename: String) raises:
         with open(filename, "r") as f:
-
-            @parameter
-            fn read_bytes_as[dtype: DType](size: Int) raises -> SIMD[dtype, 1]:
+            def read_bytes_as[dtype: DType](size: Int) raises {imm} -> SIMD[dtype, 1]:
                 var bytes = f.read_bytes(size)
-                var result = bytes.unsafe_ptr().bitcast[SIMD[dtype, 1]]()[0]
+                var result = bytes.unsafe_ptr().unsafe_bitcast[SIMD[dtype, 1]]()[unsafe_offset=0]
                 _ = bytes
                 return result
 
@@ -185,8 +191,8 @@ struct Tokenizer:
             self.vocab = List[String]()
 
             var max_token_bytes = f.read_bytes(4)
-            var max_token_ptr = max_token_bytes.unsafe_ptr().bitcast[Int32]()
-            self.max_token_length = Int(max_token_ptr[0])
+            var max_token_ptr = max_token_bytes.unsafe_ptr().unsafe_bitcast[Int32]()
+            self.max_token_length = Int(max_token_ptr[unsafe_offset=0])
 
             self.map_vocab_to_index = Dict[String, Int]()
 
@@ -198,7 +204,7 @@ struct Tokenizer:
                 self.vocab_scores.append(score)
                 self.map_vocab_to_index[self.vocab[i]] = i
 
-    fn find(self, token_o: String) -> Int:
+    def find(self, token_o: String) -> Int:
         var token = wrap(token_o)
 
         # Handle TinyLlama specific newline mapping
@@ -209,7 +215,7 @@ struct Tokenizer:
         var index = self.map_vocab_to_index.find(token)
         return index.or_else(-1)
 
-    fn print_tokens(self, n: Int):
+    def print_tokens(self, n: Int):
         var count = min(n, self.vocab_size)
         print("First", count, "tokens:")
         for i in range(count):
@@ -228,19 +234,19 @@ struct Config:
     var head_size: Int
     var shared_weights: Bool
 
-    fn __init__(out self, filename: String, print_config: Bool) raises:
+    def __init__(out self, filename: String, print_config: Bool) raises:
         var f = open(filename, "r")
         var bytes_of_config_params = NUM_CONFIG_INT * size_of[DType.int32]()
         var config_data_raw = f.read_bytes(bytes_of_config_params)
         f.close()
-        var int32_ptr = config_data_raw.steal_data().bitcast[Int32]()
-        self.dim = Int(int32_ptr[0])
-        self.hidden_dim = Int(int32_ptr[1])
-        self.n_layers = Int(int32_ptr[2])
-        self.n_heads = Int(int32_ptr[3])
-        self.n_kv_heads = Int(int32_ptr[4])
-        self.vocab_size = Int(int32_ptr[5])
-        self.seq_len = Int(int32_ptr[6])
+        var int32_ptr = config_data_raw.unsafe_take_allocation().unsafe_leak().unsafe_bitcast[Int32]()
+        self.dim = Int(int32_ptr[unsafe_offset=0])
+        self.hidden_dim = Int(int32_ptr[unsafe_offset=1])
+        self.n_layers = Int(int32_ptr[unsafe_offset=2])
+        self.n_heads = Int(int32_ptr[unsafe_offset=3])
+        self.n_kv_heads = Int(int32_ptr[unsafe_offset=4])
+        self.vocab_size = Int(int32_ptr[unsafe_offset=5])
+        self.seq_len = Int(int32_ptr[unsafe_offset=6])
         self.head_size = self.dim // self.n_heads
         self.kv_dim = (self.n_kv_heads * self.dim) // self.n_heads
         self.kv_mul = self.n_heads // self.n_kv_heads
@@ -267,7 +273,7 @@ struct RunState:
     var key_cache: Matrix  # (layer, seq_len, dim)
     var value_cache: Matrix  # (layer, seq_len, dim)
 
-    fn __init__(out self, config: Config) raises:
+    def __init__(out self, config: Config) raises:
         self.x = Matrix(config.dim)
         self.xb = Matrix(config.dim)
         self.xb2 = Matrix(config.dim)
@@ -297,15 +303,13 @@ struct TransformerWeights:
     var rms_final_weight: Matrix
     var wcls: Matrix
 
-    fn __init__(out self, file_name: String, config: Config) raises:
+    def __init__(out self, file_name: String, config: Config) raises:
         var bytes_read = 0
         var f = open(file_name, "r")
 
         _ = f.read_bytes(NUM_CONFIG_INT * size_of[DType.int32]())
         bytes_read += NUM_CONFIG_INT * size_of[DType.int32]()
-
-        @parameter
-        fn read_weights(*dims: Int) raises -> Matrix:
+        def read_weights(*dims: Int) raises {mut} -> Matrix:
             var dim_list = List[Int]()
             var num_elements = 1
             for i in range(len(dims)):
@@ -316,7 +320,7 @@ struct TransformerWeights:
                 num_elements * size_of[Float32]()
             )
             bytes_read += num_elements * size_of[Float32]()
-            var data = tmp.steal_data().bitcast[Float32]()
+            var data = tmp.unsafe_take_allocation().unsafe_leak().unsafe_bitcast[Float32]()
             return Matrix(data, dim_list^)
 
         self.token_embedding_table = read_weights(config.vocab_size, config.dim)
@@ -354,71 +358,71 @@ struct TransformerWeights:
         )
 
 @always_inline
-fn rmsnorm(
-    mut o: BufferPtrFloat32,
+def rmsnorm(
+    o: BufferPtrFloat32,
     x: BufferPtrFloat32,
     weight: BufferPtrFloat32,
     size: Int
 ):
     # Calculate sum of squares
     var tmp_ptr = stack_allocation[nelts, Float32]()
-    tmp_ptr.store[width=nelts](0, SIMD[DType.float32, nelts](0))
+    tmp_ptr.unsafe_store[width=nelts](0, SIMD[DType.float32, nelts](0))
 
-    fn _sum2[_nelts: Int](j: Int) unified {mut}:
-        var val = (x + j).load[width=_nelts](0) ** 2
-        var curr = tmp_ptr.load[width=_nelts](0)
-        tmp_ptr.store[width=_nelts](0, curr + val)
+    def _sum2[_nelts: Int](j: Int) {imm}:
+        var val = x.unsafe_load[width=_nelts](j) ** 2
+        var curr = tmp_ptr.unsafe_load[width=_nelts](0)
+        tmp_ptr.unsafe_store[width=_nelts](0, curr + val)
 
     vectorize[nelts](size, _sum2)
 
-    var ss: Float32 = tmp_ptr.load[width=nelts](0).reduce_add()
-    ss = ss / size + 1e-5
+    var ss: Float32 = tmp_ptr.unsafe_load[width=nelts](0).reduce_add()
+    ss = ss / Float32(size) + 1e-5
     ss = 1.0 / math.sqrt(ss)
 
     # Normalize and scale
-    fn _norm[_nelts: Int](j: Int) unified {mut}:
-        var val = weight.load[width=_nelts](j) * ss * x.load[width=_nelts](j)
-        (o + j).store[width=_nelts](0, val)
+    def _norm[_nelts: Int](j: Int) {imm}:
+        var val = weight.unsafe_load[width=_nelts](j) * ss * x.unsafe_load[width=_nelts](j)
+        o.unsafe_store[width=_nelts](j, val)
 
     vectorize[nelts](size, _norm)
 
 @always_inline
-fn softmax(mut x: BufferPtrFloat32, size: Int):
+def softmax(x: BufferPtrFloat32, size: Int):
     softmax(x, 0, size)
 
 @always_inline
-fn softmax(mut x: BufferPtrFloat32, start: Int, end: Int):
+def softmax(x: BufferPtrFloat32, start: Int, end: Int):
     var max_val: Float32 = -1e9
 
-    fn _max[_nelts: Int](ii: Int) unified {mut}:
-        var val = x.load[width=_nelts](start + ii).reduce_max()
+    def _max[_nelts: Int](ii: Int) {imm, mut max_val}:
+        var val = x.unsafe_load[width=_nelts](start + ii).reduce_max()
         if val > max_val:
             max_val = val
 
     vectorize[nelts](end - start, _max)
 
     var acc_ptr = stack_allocation[nelts, Float32]()
-    acc_ptr.store[width=nelts](0, SIMD[DType.float32, nelts](0))
+    acc_ptr.unsafe_store[width=nelts](0, SIMD[DType.float32, nelts](0))
 
-    fn _exp[_nelts: Int](ii: Int) unified {mut}:
-        var val = math.exp(x.load[width=_nelts](start + ii) - max_val)
-        x.store[width=_nelts](start + ii, val)
-        var curr = acc_ptr.load[width=_nelts](0)
-        acc_ptr.store[width=_nelts](0, curr + val)
+    def _exp[_nelts: Int](ii: Int) {imm}:
+        var val = math.exp(x.unsafe_load[width=_nelts](start + ii) - max_val)
+        x.unsafe_store[width=_nelts](start + ii, val)
+        var curr = acc_ptr.unsafe_load[width=_nelts](0)
+        acc_ptr.unsafe_store[width=_nelts](0, curr + val)
 
     vectorize[nelts](end - start, _exp)
 
-    var ssum = acc_ptr.load[width=nelts](0).reduce_add()
+    var ssum = acc_ptr.unsafe_load[width=nelts](0).reduce_add()
 
-    fn _norm[_nelts: Int](ii: Int) unified {mut}:
-        x.store[width=_nelts](
-            start + ii, x.load[width=_nelts](start + ii) / ssum
+    def _norm[_nelts: Int](ii: Int) {imm}:
+        x.unsafe_store[width=_nelts](
+            start + ii, x.unsafe_load[width=_nelts](start + ii) / ssum
         )
 
     vectorize[nelts](end - start, _norm)
 
 @always_inline
-fn batch_matmul[
+def batch_matmul[
     n: Int
 ](
     C: StaticTuple[BufferPtrFloat32, n],
@@ -428,35 +432,31 @@ fn batch_matmul[
     cols: Int,
     workers: Int,
 ):
-    @parameter
-    fn compute_row(i: Int):
+    def compute_row(i: Int) {imm}:
         var tmp_ptr = stack_allocation[n * nelts, Float32]()
 
-        @parameter
-        for k in range(n):
-            tmp_ptr.store[width=nelts](k * nelts, SIMD[DType.float32, nelts](0))
+        comptime for k in range(n):
+            tmp_ptr.unsafe_store[width=nelts](k * nelts, SIMD[DType.float32, nelts](0))
 
         var row_offset = i * cols
 
-        fn dot[_nelts: Int](j: Int) unified {mut}:
-            var a = (A + j).load[width=_nelts](0)
+        def dot[_nelts: Int](j: Int) {imm}:
+            var a = A.unsafe_load[width=_nelts](j)
 
-            @parameter
-            for k in range(n):
-                var val = a * (B[k] + row_offset + j).load[width=_nelts](0)
-                var curr = tmp_ptr.load[width=_nelts](k * nelts)
-                tmp_ptr.store[width=_nelts](k * nelts, curr + val)
+            comptime for k in range(n):
+                var val = a * B[k].unsafe_load[width=_nelts](row_offset + j)
+                var curr = tmp_ptr.unsafe_load[width=_nelts](k * nelts)
+                tmp_ptr.unsafe_store[width=_nelts](k * nelts, curr + val)
 
         vectorize[nelts](cols, dot)
 
-        @parameter
-        for k in range(n):
-            C[k].store(i, tmp_ptr.load[width=nelts](k * nelts).reduce_add())
+        comptime for k in range(n):
+            C[k].unsafe_store(i, tmp_ptr.unsafe_load[width=nelts](k * nelts).reduce_add())
 
-    parallelize[compute_row](rows, workers)
+    parallelize(compute_row, rows, workers)
 
 @always_inline
-fn matmul(C: BufferPtrFloat32, A: BufferPtrFloat32, B: BufferPtrFloat32, rows: Int, cols: Int, workers: Int) raises:
+def matmul(C: BufferPtrFloat32, A: BufferPtrFloat32, B: BufferPtrFloat32, rows: Int, cols: Int, workers: Int) raises:
     batch_matmul[1](
         StaticTuple[BufferPtrFloat32, 1](C),
         A,
@@ -467,21 +467,43 @@ fn matmul(C: BufferPtrFloat32, A: BufferPtrFloat32, B: BufferPtrFloat32, rows: I
     )
 
 @always_inline
-fn add(dest: BufferPtrFloat32, src: BufferPtrFloat32, size: Int):
-    fn add_kernel[_nelts: Int](i: Int) unified {mut}:
-        var a = (dest + i).load[width=_nelts](0)
-        var b = (src + i).load[width=_nelts](0)
-        dest.store[width=_nelts](i, a + b)
+def add(dest: BufferPtrFloat32, src: BufferPtrFloat32, size: Int):
+    def add_kernel[_nelts: Int](i: Int) {imm}:
+        var a = dest.unsafe_load[width=_nelts](i)
+        var b = src.unsafe_load[width=_nelts](i)
+        dest.unsafe_store[width=_nelts](i, a + b)
     vectorize[nelts](size, add_kernel)
+
+@always_inline
+def dot(a: BufferPtrFloat32, b: BufferPtrFloat32, size: Int) -> Float32:
+    # Dot product of two vectors of length `size`
+    var acc: Float32 = 0.0
+
+    def dot_kernel[_nelts: Int](i: Int) {imm, mut acc}:
+        acc += (
+            a.unsafe_load[width=_nelts](i) * b.unsafe_load[width=_nelts](i)
+        ).reduce_add()
+
+    vectorize[nelts](size, dot_kernel)
+    return acc
+
+@always_inline
+def axpy(dest: BufferPtrFloat32, src: BufferPtrFloat32, scale: Float32, size: Int):
+    # dest += scale * src, over `size` elements
+    def axpy_kernel[_nelts: Int](i: Int) {imm}:
+        var val = dest.unsafe_load[width=_nelts](i) + scale * src.unsafe_load[width=_nelts](i)
+        dest.unsafe_store[width=_nelts](i, val)
+
+    vectorize[nelts](size, axpy_kernel)
 
 struct Transformer:
     var workers: Int
 
-    fn __init__(out self, workers: Int):
+    def __init__(out self, workers: Int):
         self.workers = workers
 
     @always_inline
-    fn rope_rotation_llama(
+    def rope_rotation_llama(
         self,
         q_ptr: BufferPtrFloat32,
         k_ptr: BufferPtrFloat32,
@@ -490,31 +512,30 @@ struct Transformer:
         config: Config,
         head_size: Int
     ):
-        @parameter
-        fn head_loop(i: Int):
+        def head_loop(i: Int) {imm}:
             for j in range(0, head_size, 2):
-                var fcr = freq_cis_real_row[j // 2]
-                var fci = freq_cis_imag_row[j // 2]
+                var fcr = freq_cis_real_row[unsafe_offset=j // 2]
+                var fci = freq_cis_imag_row[unsafe_offset=j // 2]
 
                 # q rotation
                 var q_idx = i * head_size + j
-                var q0 = q_ptr[q_idx]
-                var q1 = q_ptr[q_idx + 1]
-                q_ptr[q_idx] = q0 * fcr - q1 * fci
-                q_ptr[q_idx + 1] = q0 * fci + q1 * fcr
+                var q0 = q_ptr[unsafe_offset=q_idx]
+                var q1 = q_ptr[unsafe_offset=q_idx + 1]
+                q_ptr[unsafe_offset=q_idx] = q0 * fcr - q1 * fci
+                q_ptr[unsafe_offset=q_idx + 1] = q0 * fci + q1 * fcr
 
                 # k rotation
                 if i < config.n_kv_heads:
                     var k_idx = i * head_size + j
-                    var k0 = k_ptr[k_idx]
-                    var k1 = k_ptr[k_idx + 1]
-                    k_ptr[k_idx] = k0 * fcr - k1 * fci
-                    k_ptr[k_idx + 1] = k0 * fci + k1 * fcr
+                    var k0 = k_ptr[unsafe_offset=k_idx]
+                    var k1 = k_ptr[unsafe_offset=k_idx + 1]
+                    k_ptr[unsafe_offset=k_idx] = k0 * fcr - k1 * fci
+                    k_ptr[unsafe_offset=k_idx + 1] = k0 * fci + k1 * fcr
 
-        parallelize[head_loop](config.n_heads, self.workers)
+        parallelize(head_loop, config.n_heads, self.workers)
 
     @always_inline
-    fn transformer(
+    def transformer(
         self,
         token: Int,
         pos: Int,
@@ -527,11 +548,11 @@ struct Transformer:
         var head_size = config.head_size
         var kv_dim = config.kv_dim
         var kv_mul = config.kv_mul
-        var sqrt_head_size = math.sqrt[dtype=DType.float32, width=1](Float32(head_size))
+        var sqrt_head_size = math.sqrt(Float32(head_size))
 
         # Copy the token embedding into x
         var content_row = weights.token_embedding_table.slice(token) # returns pointer to row
-        memcpy(dest=state.x.data, src=content_row, count=dim)
+        unsafe_memcpy(dest=state.x.data, src=content_row, count=dim)
 
         # Pluck out the "pos" row of freq_cis_real and freq_cis_imag
         var freq_cis_real_row = weights.freq_cis_real.slice(pos)
@@ -583,43 +604,37 @@ struct Transformer:
             # Apply RoPE rotation
             self.rope_rotation_llama(state.q.data, k_ptr, freq_cis_real_row, freq_cis_imag_row, config, head_size)
 
-            memset_zero(state.xb.data, state.xb.size())
+            unsafe_memset_zero(state.xb.data, state.xb.size())
 
             # Multihead attention
-            @parameter
-            fn loop_over_heads(h: Int):
+            def loop_over_heads(h: Int) {imm}:
                 var q_offset = h * head_size
                 var att_offset = h * config.seq_len
 
                 for t in range(pos + 1):
                     var k_offset = loff + t * kv_dim + (h // kv_mul) * head_size
-                    var score: Float32 = 0.0
-
-                    fn score_fn[_nelts: Int](i: Int) unified {mut}:
-                        score += (
-                            state.q.data.load[width=_nelts](q_offset + i)
-                                * state.key_cache.data.load[width=_nelts](k_offset + i)
-                        ).reduce_add()
-
-                    vectorize[nelts](head_size, score_fn)
+                    var score = dot(
+                        state.q.data.unsafe_offset(q_offset),
+                        state.key_cache.data.unsafe_offset(k_offset),
+                        head_size,
+                    )
                     score /= sqrt_head_size
-                    state.att.data[att_offset + t] = score
+                    state.att.data[unsafe_offset=att_offset + t] = score
 
                 softmax(state.att.data, att_offset, att_offset + pos + 1)
 
                 var xb_offset = h * head_size
                 for t in range(pos + 1):
                     var v_offset = loff + t * kv_dim + (h // kv_mul) * head_size
-                    var a = state.att.data[att_offset + t]
+                    var a = state.att.data[unsafe_offset=att_offset + t]
+                    axpy(
+                        state.xb.data.unsafe_offset(xb_offset),
+                        state.value_cache.data.unsafe_offset(v_offset),
+                        a,
+                        head_size,
+                    )
 
-                    fn xb_accumulate[_nelts: Int](i: Int) unified {mut}:
-                        var xbi = (state.xb.data + xb_offset + i).load[width=_nelts](0)
-                            + a * (state.value_cache.data + v_offset + i).load[width=_nelts](0)
-                        (state.xb.data + xb_offset + i).store[width=_nelts](0, xbi)
-
-                    vectorize[nelts](head_size, xb_accumulate)
-
-            parallelize[loop_over_heads](config.n_heads, self.workers)
+            parallelize(loop_over_heads, config.n_heads, self.workers)
 
             matmul(state.xb2.data, state.xb.data, weights.wo.slice(l), dim, dim, self.workers)
 
@@ -641,11 +656,11 @@ struct Transformer:
                 self.workers,
             )
 
-            fn silu[_nelts: Int](i: Int) unified {mut}:
-                var initial_hb = (state.hb.data + i).load[width=_nelts](0)
+            def silu[_nelts: Int](i: Int) {imm}:
+                var initial_hb = state.hb.data.unsafe_load[width=_nelts](i)
                 var hbi = initial_hb * (1.0 / (1.0 + math.exp(-initial_hb)))
-                (state.hb.data + i).store[width=_nelts](
-                    0, hbi * (state.hb2.data + i).load[width=_nelts](0)
+                state.hb.data.unsafe_store[width=_nelts](
+                    i, hbi * state.hb2.data.unsafe_load[width=_nelts](i)
                 )
 
             vectorize[nelts](hidden_dim, silu)
@@ -661,28 +676,28 @@ struct Transformer:
         # Classifier into logits
         matmul(state.logits.data, state.x.data, weights.wcls.data, config.vocab_size, dim, self.workers)
 
-fn argmax(v: BufferPtrFloat32, size: Int) -> Int:
+def argmax(v: BufferPtrFloat32, size: Int) -> Int:
     var max_i: Int = 0
-    var max_p: Float32 = v[0]
+    var max_p: Float32 = v[unsafe_offset=0]
     for i in range(size):
-        if v[i] > max_p:
+        if v[unsafe_offset=i] > max_p:
             max_i = i
-            max_p = v[i]
+            max_p = v[unsafe_offset=i]
     return max_i
 
-fn sample(probabilities: BufferPtrFloat32, size: Int) -> Int:
+def sample(probabilities: BufferPtrFloat32, size: Int) -> Int:
     var r = random.random_float64().cast[DType.float32]()
     var cdf: Float32 = 0.0
     for i in range(size):
-        cdf += probabilities[i]
+        cdf += probabilities[unsafe_offset=i]
         if r < cdf:
             return i
     return size - 1
 
-fn bpe_encode(mut tokens: List[Int], text: String, tok: Tokenizer):
-    for pos in range(len(text)):
-        var char = String(text[pos:pos+1])
-        var id = tok.find(char)
+def bpe_encode(mut tokens: List[Int], text: String, tok: Tokenizer):
+    for pos in range(text.byte_length()):
+        var ch = String(text[byte=pos:pos+1])
+        var id = tok.find(ch)
         if id == -1:
             print("Not a good prompt token at pos ", pos)
             return
@@ -694,8 +709,8 @@ fn bpe_encode(mut tokens: List[Int], text: String, tok: Tokenizer):
         var best_idx = -1
 
         for i in range(len(tokens) - 1):
-            var str = tok.vocab[tokens[i]] + tok.vocab[tokens[i + 1]]
-            var id = tok.find(str)
+            var pair = tok.vocab[tokens[i]] + tok.vocab[tokens[i + 1]]
+            var id = tok.find(pair)
             if id != -1 and tok.vocab_scores[id] > best_score:
                 best_score = tok.vocab_scores[id]
                 best_id = id
@@ -712,11 +727,11 @@ fn bpe_encode(mut tokens: List[Int], text: String, tok: Tokenizer):
             _tokens.append(tokens[i])
         tokens = _tokens^
 
-fn get_token_str(var token: Int, var token_str: String) -> String:
+def get_token_str(var token: Int, var token_str: String) -> String:
     var is_byte_token = False
 
     # add special token retrieval for TinyLlama
-    if len(token_str) == 6 and String(token_str[0:1]) == "<" and String(token_str[1:2]) == "0" and String(token_str[2:3]) == "x":
+    if token_str.byte_length() == 6 and String(token_str[byte=0:1]) == "<" and String(token_str[byte=1:2]) == "0" and String(token_str[byte=2:3]) == "x":
         if token_str == "<0x0A>":
             token_str = "\n"
         elif token_str == "<0x09>":
@@ -725,17 +740,18 @@ fn get_token_str(var token: Int, var token_str: String) -> String:
             is_byte_token = True
 
     if not is_byte_token:
-        if token == 1 and len(token_str) > 0 and String(token_str[0:1]) == " ":
-            token_str = String(token_str[1:])
+        if token == 1 and token_str.byte_length() > 0 and String(token_str[byte=0:1]) == " ":
+            var tail = String(token_str[byte=1:])
+            token_str = tail^
     else:
         token_str = ""
 
     return token_str
 
-fn time_in_ms() -> UInt:
-    return time.perf_counter_ns() // 1_000_000
+def time_in_ms() -> UInt:
+    return UInt(time.perf_counter_ns() // 1_000_000)
 
-fn print_usage():
+def print_usage():
     print("Usage: mojo llama2.mojo <checkpoint> [options]")
     print(
         'Example: mojo llama2.mojo stories15M.bin -j 6 -s 99 -n 256 -t 0.5 -i "Once upon a time"'
@@ -751,7 +767,7 @@ fn print_usage():
     print("  -j <int>    number of parallel workers (default: number of performance cores)")
     print("  -pc <int>   print config (0 or 1)")
 
-fn main() raises:
+def main() raises:
 
     var tokenizer = "tokenizer.bin"
     var checkpoint = "stories15M.bin"
@@ -761,9 +777,7 @@ fn main() raises:
     var rng_seed: Int = Int(time.perf_counter_ns() // 1_000_000)
     var print_config = 0
     var workers: Int = num_performance_cores()
-
-    @parameter
-    fn argparse() raises -> Int:
+    def argparse() raises {mut} -> Int:
         var args = argv()
         if len(args) < 2:
             return 0
@@ -786,12 +800,12 @@ fn main() raises:
             if args[i] == "-t":
                 var val = args[i + 1]
                 temperature = 0.0
-                for c in range(0, len(val)):
-                    if String(val[c:c+1]) == ".":
-                        temperature += atol(String(val[c+1:c+2])) * Float32(0.1)
+                for c in range(0, val.byte_length()):
+                    if String(val[byte=c:c+1]) == ".":
+                        temperature += Float32(atol(String(val[byte=c+1:c+2]))) * Float32(0.1)
                         break
                     else:
-                        temperature = atol(String(val[c:c+1]))
+                        temperature = Float32(atol(String(val[byte=c:c+1])))
         return 1
 
     var res = argparse()
@@ -832,7 +846,7 @@ fn main() raises:
                 next_token = argmax(state.logits.data, config.vocab_size)
             else:
                 for q in range(config.vocab_size):
-                    state.logits.data[q] = state.logits.data[q] / temperature
+                    state.logits.data[unsafe_offset=q] = state.logits.data[unsafe_offset=q] / temperature
 
                 softmax(state.logits.data, config.vocab_size)
                 next_token = sample(state.logits.data, config.vocab_size)

@@ -6,7 +6,7 @@
 
 Have you ever wanted to inference a baby Llama 2 model in pure Mojo? No? Well, now you can!
 
-**supported version**: [Mojo 0.26.2.0](https://docs.modular.com/mojo/changelog/#nightly-v0262)
+**supported version**: [Mojo 1.0.0](https://mojolang.org/releases/v1.0.0/) (Modular 26.5.0)
 
 
 With the release of [Mojo](https://www.modular.com/blog/mojo-its-finally-here), I was inspired to take my Python port
@@ -50,7 +50,19 @@ At the moment, the following models were successfully executed via `llama2.mojo`
 ## prerequisites
 
 Make sure you have installed
-and [configured mojo on your environment](https://docs.modular.com/mojo/manual/get-started/index.html)
+and [configured mojo on your environment](https://docs.modular.com/mojo/manual/get-started/index.html).
+
+The quickest way to get the Mojo 1.0 toolchain is the `modular` Python package
+(it ships the `mojo` compiler together with MAX, which provides `parallelize`):
+
+```bash
+python3 -m venv ~/.modular-venv        # or: uv venv --python 3.13 ~/.modular-venv
+~/.modular-venv/bin/pip install modular  # or: uv pip install --python ~/.modular-venv/bin/python modular
+export PATH="$HOME/.modular-venv/bin:$PATH"
+mojo --version   # Mojo 1.0.0
+```
+
+Linking a Mojo executable needs a C compiler on the host (`apt-get install gcc` on Debian/Ubuntu).
 
 
 ## feel the 🔥 magic

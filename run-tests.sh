@@ -33,10 +33,10 @@ for test in "${TESTS[@]}"; do
     
     if mojo -I . "$test"; then
         echo "✓ $test PASSED"
-        ((PASSED++))
+        PASSED=$((PASSED + 1))
     else
         echo "✗ $test FAILED"
-        ((FAILED++))
+        FAILED=$((FAILED + 1))
         FAILED_TESTS+=("$test")
     fi
     

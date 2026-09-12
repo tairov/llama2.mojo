@@ -1,8 +1,8 @@
-from testing import assert_true, assert_almost_equal, assert_equal
+from std.testing import assert_true, assert_almost_equal, assert_equal
 from llama2 import Matrix, rmsnorm, softmax, argmax, sample
-import math
+from std import math
 
-fn test_rmsnorm_basic() raises:
+def test_rmsnorm_basic() raises:
     """Test basic RMS normalization."""
     print("\nTesting basic rmsnorm:")
     
@@ -40,7 +40,7 @@ fn test_rmsnorm_basic() raises:
     
     print("✓ Basic rmsnorm test passed")
 
-fn test_rmsnorm_with_weights() raises:
+def test_rmsnorm_with_weights() raises:
     """Test RMS normalization with non-uniform weights."""
     print("\nTesting rmsnorm with custom weights:")
     
@@ -76,7 +76,7 @@ fn test_rmsnorm_with_weights() raises:
     
     print("✓ Rmsnorm with weights test passed")
 
-fn test_rmsnorm_zeros() raises:
+def test_rmsnorm_zeros() raises:
     """Test RMS normalization with zero input (tests epsilon handling)."""
     print("\nTesting rmsnorm with zero input:")
     
@@ -101,7 +101,7 @@ fn test_rmsnorm_zeros() raises:
     
     print("✓ Rmsnorm with zeros test passed")
 
-fn test_softmax_basic() raises:
+def test_softmax_basic() raises:
     """Test basic softmax function."""
     print("\nTesting basic softmax:")
     
@@ -136,7 +136,7 @@ fn test_softmax_basic() raises:
     print("  Sum of probabilities:", total)
     print("✓ Basic softmax test passed")
 
-fn test_softmax_uniform() raises:
+def test_softmax_uniform() raises:
     """Test softmax with uniform input."""
     print("\nTesting softmax with uniform input:")
     
@@ -158,7 +158,7 @@ fn test_softmax_uniform() raises:
     
     print("✓ Softmax uniform test passed")
 
-fn test_softmax_large_values() raises:
+def test_softmax_large_values() raises:
     """Test softmax with large values (numerical stability)."""
     print("\nTesting softmax with large values:")
     
@@ -190,7 +190,7 @@ fn test_softmax_large_values() raises:
     print("  Sum of probabilities:", total)
     print("✓ Softmax large values test passed")
 
-fn test_softmax_negative_values() raises:
+def test_softmax_negative_values() raises:
     """Test softmax with negative values."""
     print("\nTesting softmax with negative values:")
     
@@ -222,7 +222,7 @@ fn test_softmax_negative_values() raises:
     print("  Sum of probabilities:", total)
     print("✓ Softmax negative values test passed")
 
-fn test_argmax_basic() raises:
+def test_argmax_basic() raises:
     """Test basic argmax function."""
     print("\nTesting basic argmax:")
     
@@ -247,7 +247,7 @@ fn test_argmax_basic() raises:
     
     print("✓ Basic argmax test passed")
 
-fn test_argmax_first_element() raises:
+def test_argmax_first_element() raises:
     """Test argmax when first element is maximum."""
     print("\nTesting argmax with first element as max:")
     
@@ -268,7 +268,7 @@ fn test_argmax_first_element() raises:
     
     print("✓ Argmax first element test passed")
 
-fn test_argmax_last_element() raises:
+def test_argmax_last_element() raises:
     """Test argmax when last element is maximum."""
     print("\nTesting argmax with last element as max:")
     
@@ -289,7 +289,7 @@ fn test_argmax_last_element() raises:
     
     print("✓ Argmax last element test passed")
 
-fn test_argmax_negative_values() raises:
+def test_argmax_negative_values() raises:
     """Test argmax with negative values."""
     print("\nTesting argmax with negative values:")
     
@@ -315,7 +315,7 @@ fn test_argmax_negative_values() raises:
     
     print("✓ Argmax negative values test passed")
 
-fn test_argmax_equal_values() raises:
+def test_argmax_equal_values() raises:
     """Test argmax with equal values (should return first occurrence)."""
     print("\nTesting argmax with equal max values:")
     
@@ -339,7 +339,7 @@ fn test_argmax_equal_values() raises:
     
     print("✓ Argmax equal values test passed")
 
-fn test_sample_basic() raises:
+def test_sample_basic() raises:
     """Test basic sampling from probability distribution."""
     print("\nTesting basic sample:")
     
@@ -377,7 +377,7 @@ fn test_sample_basic() raises:
     # Index 1 (prob=0.5) should generally have more samples than others
     print("✓ Basic sample test passed")
 
-fn test_sample_deterministic() raises:
+def test_sample_deterministic() raises:
     """Test sampling with deterministic probabilities."""
     print("\nTesting sample with deterministic distribution:")
     
@@ -399,7 +399,7 @@ fn test_sample_deterministic() raises:
     print("  All samples returned index 2 (as expected)")
     print("✓ Sample deterministic test passed")
 
-fn test_sample_uniform() raises:
+def test_sample_uniform() raises:
     """Test sampling from uniform distribution."""
     print("\nTesting sample with uniform distribution:")
     
@@ -432,7 +432,7 @@ fn test_sample_uniform() raises:
     
     print("✓ Sample uniform test passed")
 
-fn test_sample_edge_cases() raises:
+def test_sample_edge_cases() raises:
     """Test sampling edge cases."""
     print("\nTesting sample edge cases:")
     
@@ -466,7 +466,7 @@ fn test_sample_edge_cases() raises:
     
     print("✓ Sample edge cases test passed")
 
-fn test_rmsnorm_softmax_integration() raises:
+def test_rmsnorm_softmax_integration() raises:
     """Test integration of rmsnorm and softmax."""
     print("\nTesting rmsnorm + softmax integration:")
     
@@ -505,7 +505,7 @@ fn test_rmsnorm_softmax_integration() raises:
     print("  Sum of probabilities:", total)
     print("✓ Integration test passed")
 
-fn main() raises:
+def main() raises:
     print("=" * 60)
     print("Testing calculation functions")
     print("=" * 60)
