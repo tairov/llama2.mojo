@@ -6,7 +6,7 @@
 
 Have you ever wanted to inference a baby Llama 2 model in pure Mojo? No? Well, now you can!
 
-**supported version**: [Mojo 1.0.0](https://mojolang.org/releases/v1.0.0/) (Modular 26.5.0)
+**supported version**: [Mojo 1.1.0](https://mojolang.org/releases/v1.1.0/) (MAX 26.6.0)
 
 
 With the release of [Mojo](https://www.modular.com/blog/mojo-its-finally-here), I was inspired to take my Python port
@@ -63,15 +63,16 @@ _Last benchmark run: 2026-09-12, Mojo 1.0.0, persistent worker pool build (PR #1
 Make sure you have installed
 and [configured mojo on your environment](https://docs.modular.com/mojo/manual/get-started/index.html).
 
-The quickest way to get the Mojo 1.0 toolchain is the `modular` Python package
-(it ships the `mojo` compiler together with MAX, which provides `parallelize`):
+Install the Mojo 1.1 compiler and MAX (which provides `parallelize`) with `uv`:
 
 ```bash
-python3 -m venv ~/.modular-venv        # or: uv venv --python 3.13 ~/.modular-venv
-~/.modular-venv/bin/pip install modular  # or: uv pip install --python ~/.modular-venv/bin/python modular
-export PATH="$HOME/.modular-venv/bin:$PATH"
-mojo --version   # Mojo 1.0.0
+uv venv --python 3.13 ~/.modular-venv
+uv pip install --python ~/.modular-venv/bin/python mojo "max[all]"
+source ~/.modular-venv/bin/activate
+mojo --version   # Mojo 1.1.0
 ```
+
+The old `modular` package was retired in Modular 26.6.
 
 Linking a Mojo executable needs a C compiler on the host (`apt-get install gcc` on Debian/Ubuntu).
 
@@ -109,7 +110,7 @@ mojo llama2.mojo stories15M.bin -s 100 -n 256 -t 0.5 -i "Once upon a time"
 - `-t <float>` - temperature in [0,1.0] (default: 0.9)
 - `-i <string>` - input prompt
 - `-z <string>` - tokenizer path (default: tokenizer.bin)
-- `-j <int>` - number of parallel workers (default: number of performance cores). Workers are persistent threads that spin between tokens, so don't ask for more than you have cores.
+- `-j <int>` - number of parallel workers (default: number of performance cores; values are clamped to that count).
 - `-pc <int>` - print config (0 or 1)
 
 **example output**
@@ -216,5 +217,4 @@ This function takes an integer n as a parameter and returns the next Fibonacci n
 ## license
 
 MIT
-
 

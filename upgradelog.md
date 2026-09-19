@@ -1,4 +1,24 @@
-# Performance: persistent worker pool (after the Mojo 1.0 upgrade)
+# Upgrade Log: Mojo 1.0 -> 1.1
+
+Toolchain: Mojo 1.1.0 and MAX 26.6.0 from PyPI (`uv pip install mojo
+"max[all]"`). The retired `modular` package is no longer required.
+
+## Compatibility changes
+
+- Removed the `std.runtime.asyncrt.TaskGroup` and `parallelism_level` usage;
+  Mojo 1.1 removed the public async task API.
+- The transformer now dispatches one synchronous `max.algorithm.parallelize`
+  operation per forward pass. Its existing fixed worker partitions and
+  sense-reversing barriers are unchanged.
+- Updated atomics from `Atomic[DType.int]` to the Mojo 1.1 value-type form,
+  `Atomic[Int]`.
+- Workers are clamped to `num_performance_cores()`.
+- `mojo build llama2.mojo`, all five test programs, and multi-worker inference
+  with `stories15M.bin` pass under Mojo 1.1.0.
+
+---
+
+# Performance: persistent worker pool (Mojo 1.0 implementation history)
 
 The Mojo 1.0 port initially scaled badly across threads: on a 4-core box
 stories15M ran at ~100 tok/s single-threaded but only ~85 tok/s with 4

@@ -1,6 +1,5 @@
 from std.algorithm import vectorize
 from max.algorithm import parallelize
-from std.runtime.asyncrt import TaskGroup, parallelism_level
 from std.atomic import Atomic
 from std.ffi import external_call
 from std.math import ceildiv
@@ -659,33 +658,23 @@ def spin_wait(spins: Int):
     if spins % 4096 == 4095:
         _ = external_call["sched_yield", Int32]()
 
-# State shared by the main thread and the persistent worker threads.
-# Heap-allocated and never moved: the worker coroutines hold a pointer to it.
+# State shared by all workers during a parallel forward pass.
+# Heap-allocated and never moved: each worker closure holds a pointer to it.
 struct PoolShared:
     var workers: Int
-    var epoch: Atomic[DType.int]      # bumped once per forward pass
-    var done: Atomic[DType.int]       # workers finished with the current pass
-    var bar_count: Atomic[DType.int]  # spin barrier: arrivals
-    var bar_gen: Atomic[DType.int]    # spin barrier: generation
-    var stop: Atomic[DType.int]
+    var bar_count: Atomic[Int]  # spin barrier: arrivals
+    var bar_gen: Atomic[Int]    # spin barrier: generation
     var args: ForwardArgs
     var xbp: BufferPtrFloat32         # per-worker private rmsnorm buffers (workers * dim)
     var xbp_dim: Int
-    var ids: List[Int]
 
     def __init__(out self, workers: Int, args: ForwardArgs):
         self.workers = workers
-        self.epoch = Atomic[DType.int](0)
-        self.done = Atomic[DType.int](0)
-        self.bar_count = Atomic[DType.int](0)
-        self.bar_gen = Atomic[DType.int](0)
-        self.stop = Atomic[DType.int](0)
+        self.bar_count = Atomic[Int](0)
+        self.bar_gen = Atomic[Int](0)
         self.args = args
         self.xbp = unsafe_alloc[Float32](workers * args.dim)
         self.xbp_dim = args.dim
-        self.ids = List[Int]()
-        for i in range(workers):
-            self.ids.append(i)
 
 comptime PoolSharedPtr = Pointer[PoolShared, MutUntrackedOrigin]
 
@@ -852,65 +841,24 @@ def forward_worker(a: ForwardArgs, xbp: BufferPtrFloat32, wid: Int, sh: PoolShar
         v0, v1, dim,
     )
 
-# Body of a persistent worker thread: wait for the next forward pass, run
-# its share, signal completion, repeat until stopped.
-struct PoolWorker(def(Int) -> None, ImplicitlyCopyable):
-    var sh: PoolSharedPtr
-
-    def __init__(out self, sh: PoolSharedPtr):
-        self.sh = sh
-
-    def __call__(self, wid: Int):
-        var seen = 0
-        while True:
-            var spins = 0
-            while self.sh[].epoch.load() == seen:
-                if self.sh[].stop.load() != 0:
-                    return
-                spin_wait(spins)
-                spins += 1
-            seen += 1
-            var a = self.sh[].args
-            forward_worker(a, self.sh[].xbp.unsafe_offset(wid * a.dim), wid, self.sh)
-            _ = self.sh[].done.fetch_add(1)
-
-async def _run_pool_worker(w: PoolWorker, wid: Int):
-    w(wid)
-
 struct Transformer:
     var workers: Int
     var sh: PoolSharedPtr
-    var worker: Pointer[PoolWorker, MutUntrackedOrigin]
-    var tg: Pointer[TaskGroup, MutUntrackedOrigin]
     var started: Bool
 
     def __init__(out self, workers: Int):
-        # Worker threads come from the runtime's pool; the calling thread is
-        # worker 0, so never ask for more threads than the pool can supply.
-        self.workers = max(1, min(workers, parallelism_level()))
+        self.workers = max(1, min(workers, num_performance_cores()))
         self.sh = unsafe_alloc[PoolShared](1)
-        self.worker = unsafe_alloc[PoolWorker](1)
-        self.tg = unsafe_alloc[TaskGroup](1)
         self.started = False
 
     def __deinit__(deinit self):
         if self.started:
-            self.sh[].stop.store(1)
-            self.tg[].wait()
-            self.tg.unsafe_deinit_pointee()
-            self.worker.unsafe_deinit_pointee()
             self.sh[].xbp.unsafe_free()
             self.sh.unsafe_deinit_pointee()
-        self.tg.unsafe_free()
-        self.worker.unsafe_free()
         self.sh.unsafe_free()
 
     def _start(mut self, args: ForwardArgs):
         self.sh.unsafe_write(PoolShared(self.workers, args))
-        self.worker.unsafe_write(PoolWorker(self.sh))
-        self.tg.unsafe_write(TaskGroup())
-        for i in range(1, self.workers):
-            self.tg[].create_task(_run_pool_worker(self.worker[], self.sh[].ids[i]))
         self.started = True
 
     @always_inline
@@ -945,15 +893,19 @@ struct Transformer:
             forward_worker(args, self.sh[].xbp, 0, self.sh)
             return
 
-        # Publish the pass, take part as worker 0, then wait for the others
+        # Mojo 1.1 removed the public async TaskGroup API. Dispatch all workers
+        # through MAX's supported synchronous thread-pool API instead.
         self.sh[].args = args
-        self.sh[].done.store(0)
-        _ = self.sh[].epoch.fetch_add(1)
-        forward_worker(args, self.sh[].xbp, 0, self.sh)
-        var spins = 0
-        while self.sh[].done.load() < self.workers - 1:
-            spin_wait(spins)
-            spins += 1
+
+        def run_worker(wid: Int) {imm}:
+            forward_worker(
+                args,
+                self.sh[].xbp.unsafe_offset(wid * args.dim),
+                wid,
+                self.sh,
+            )
+
+        parallelize(run_worker, self.workers, self.workers)
 
 def argmax(v: BufferPtrFloat32, size: Int) -> Int:
     var max_i: Int = 0
