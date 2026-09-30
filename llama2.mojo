@@ -662,7 +662,7 @@ def spin_wait(spins: Int):
 # Heap-allocated and never moved: each worker closure holds a pointer to it.
 struct PoolShared:
     var workers: Int
-    var bar_count: Atomic[Int]  # spin barrier: arrivals
+    var bar_arrivals: Pointer[Atomic[Int], MutUntrackedOrigin]
     var bar_gen: Atomic[Int]    # spin barrier: generation
     var args: ForwardArgs
     var xbp: BufferPtrFloat32         # per-worker private rmsnorm buffers (workers * dim)
@@ -670,7 +670,10 @@ struct PoolShared:
 
     def __init__(out self, workers: Int, args: ForwardArgs):
         self.workers = workers
-        self.bar_count = Atomic[Int](0)
+        # One independently written arrival flag per worker, 128 bytes apart.
+        self.bar_arrivals = unsafe_alloc[Atomic[Int]](workers * 16)
+        for wid in range(workers):
+            self.bar_arrivals.unsafe_offset(wid * 16).unsafe_write(Atomic[Int](0))
         self.bar_gen = Atomic[Int](0)
         self.args = args
         self.xbp = unsafe_alloc[Float32](workers * args.dim)
@@ -679,17 +682,24 @@ struct PoolShared:
 comptime PoolSharedPtr = Pointer[PoolShared, MutUntrackedOrigin]
 
 @always_inline
-def barrier(sh: PoolSharedPtr):
-    # Sense-reversing spin barrier across all workers (no-op for 1 worker)
+def barrier(sh: PoolSharedPtr, wid: Int):
     if sh[].workers == 1:
         return
-    var gen = sh[].bar_gen.load()
-    if sh[].bar_count.fetch_add(1) + 1 == sh[].workers:
-        sh[].bar_count.store(0)
-        sh[].bar_gen.store(gen + 1)
+    var target = sh[].bar_gen.load() + 1
+    var spins = 0
+    if wid == 0:
+        # The leader observes each worker's publication, then releases them.
+        # A flag cannot be overwritten for the next round until the leader
+        # has observed every arrival and published this generation.
+        for worker in range(1, sh[].workers):
+            var arrival = sh[].bar_arrivals.unsafe_offset(worker * 16)
+            while arrival[].load() != target:
+                spin_wait(spins)
+                spins += 1
+        sh[].bar_gen.store(target)
     else:
-        var spins = 0
-        while sh[].bar_gen.load() == gen:
+        sh[].bar_arrivals.unsafe_offset(wid * 16)[].store(target)
+        while sh[].bar_gen.load() != target:
             spin_wait(spins)
             spins += 1
 
@@ -748,7 +758,7 @@ def forward_worker(a: ForwardArgs, xbp: BufferPtrFloat32, wid: Int, sh: PoolShar
     # Copy the token embedding into x
     if wid == 0:
         unsafe_memcpy(dest=a.x, src=a.token_embedding_table.unsafe_offset(a.token * dim), count=dim)
-    barrier(sh)
+    barrier(sh, wid)
 
     # Pluck out the "pos" row of freq_cis_real and freq_cis_imag
     var freq_cis_real_row = a.freq_cis_real.unsafe_offset(a.pos * (head_size // 2))
@@ -786,17 +796,17 @@ def forward_worker(a: ForwardArgs, xbp: BufferPtrFloat32, wid: Int, sh: PoolShar
                 StaticTuple[BufferPtrFloat32, 2](wk, wv),
                 kv0, kv1, dim,
             )
-        barrier(sh)
+        barrier(sh, wid)
 
         # RoPE over this worker's heads
         for h in range(h0, h1):
             rope_head(a.q, k_ptr, freq_cis_real_row, freq_cis_imag_row, h, head_size, a.n_kv_heads)
-        barrier(sh)
+        barrier(sh, wid)
 
         # Multihead attention over this worker's heads
         for h in range(h0, h1):
             attention_head(a, l, h)
-        barrier(sh)
+        barrier(sh, wid)
 
         # Output projection + residual, over this worker's rows
         matmul_rows[1](
@@ -806,7 +816,7 @@ def forward_worker(a: ForwardArgs, xbp: BufferPtrFloat32, wid: Int, sh: PoolShar
             d0, d1, dim,
         )
         add(a.x.unsafe_offset(d0), a.xb2.unsafe_offset(d0), d1 - d0)
-        barrier(sh)
+        barrier(sh, wid)
 
         # FFN rmsnorm (private buffer again), then w1/w3 + SiLU over this worker's rows
         rmsnorm(xbp, a.x, a.rms_ffn_weight.unsafe_offset(l * dim), dim)
@@ -820,7 +830,7 @@ def forward_worker(a: ForwardArgs, xbp: BufferPtrFloat32, wid: Int, sh: PoolShar
             f0, f1, dim,
         )
         silu_mul(a.hb.unsafe_offset(f0), a.hb2.unsafe_offset(f0), f1 - f0)
-        barrier(sh)
+        barrier(sh, wid)
 
         # w2 + residual, over this worker's rows
         matmul_rows[1](
@@ -830,7 +840,7 @@ def forward_worker(a: ForwardArgs, xbp: BufferPtrFloat32, wid: Int, sh: PoolShar
             d0, d1, hidden_dim,
         )
         add(a.x.unsafe_offset(d0), a.xb.unsafe_offset(d0), d1 - d0)
-        barrier(sh)
+        barrier(sh, wid)
 
     # Final rmsnorm + classifier over this worker's slice of the vocabulary
     rmsnorm(xbp, a.x, a.rms_final_weight, dim)
@@ -853,6 +863,7 @@ struct Transformer:
 
     def __deinit__(deinit self):
         if self.started:
+            self.sh[].bar_arrivals.unsafe_free()
             self.sh[].xbp.unsafe_free()
             self.sh.unsafe_deinit_pointee()
         self.sh.unsafe_free()
