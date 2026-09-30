@@ -663,6 +663,9 @@ def spin_wait(spins: Int):
 struct PoolShared:
     var workers: Int
     var bar_count: Atomic[Int]  # spin barrier: arrivals
+    # Keep arrival RMWs off the cache line polled by waiting workers. A
+    # 128-byte gap covers both 64-byte lines and Apple Silicon's wider lines.
+    var bar_padding: SIMD[DType.int64, 16]
     var bar_gen: Atomic[Int]    # spin barrier: generation
     var args: ForwardArgs
     var xbp: BufferPtrFloat32         # per-worker private rmsnorm buffers (workers * dim)
@@ -671,6 +674,7 @@ struct PoolShared:
     def __init__(out self, workers: Int, args: ForwardArgs):
         self.workers = workers
         self.bar_count = Atomic[Int](0)
+        self.bar_padding = SIMD[DType.int64, 16](0)
         self.bar_gen = Atomic[Int](0)
         self.args = args
         self.xbp = unsafe_alloc[Float32](workers * args.dim)
