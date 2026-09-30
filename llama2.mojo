@@ -8,7 +8,7 @@ from std.memory import unsafe_memset_zero, unsafe_memcpy, stack_allocation
 from std.memory import Pointer
 from std.memory.alloc import unsafe_alloc
 from std.utils import StaticTuple
-from std.sys import argv
+from std.sys import argv, CompilationTarget
 from std.sys.info import simd_width_of, size_of, num_performance_cores
 from std import math
 from std import os
@@ -1073,6 +1073,20 @@ def main() raises:
         # Capture the owner, not just its raw pointer: Mojo destroys values
         # after their last use, and the pool must outlive every worker.
         var sh = transformer.sh
+        var previous_qos = UInt32(0)
+        var previous_priority = Int32(0)
+        comptime if CompilationTarget.is_macos():
+            if generation_workers > 1:
+                var qos_ptr = stack_allocation[1, UInt32]()
+                var priority_ptr = stack_allocation[1, Int32]()
+                var thread = external_call["pthread_self", UInt64]()
+                if external_call["pthread_get_qos_class_np", Int32](thread, qos_ptr, priority_ptr) == 0:
+                    previous_qos = qos_ptr[]
+                    previous_priority = priority_ptr[]
+                    if previous_qos != 0:
+                        # QOS_CLASS_USER_INITIATED: keep cooperating compute
+                        # workers at the same scheduling priority on macOS.
+                        _ = external_call["pthread_set_qos_class_self_np", Int32](UInt32(0x19), Int32(0))
         var start = UInt(0)
         var pos = 0
         while pos < steps:
@@ -1122,6 +1136,10 @@ def main() raises:
             if elapsed_ms > 0 and pos > 1:
                 achieved_tok_s = Float32(pos - 1) * Float32(1000.0) / Float32(elapsed_ms)
             print("\nachieved tok/s: ", achieved_tok_s)
+
+        comptime if CompilationTarget.is_macos():
+            if previous_qos != 0:
+                _ = external_call["pthread_set_qos_class_self_np", Int32](previous_qos, previous_priority)
 
     if generation_workers == 1:
         generate(0)
