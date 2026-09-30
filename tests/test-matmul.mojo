@@ -1,5 +1,6 @@
+from std.collections import List
 from std.testing import assert_true, assert_almost_equal, assert_equal
-from llama2 import Matrix, matmul, batch_matmul, BufferPtrFloat32
+from llama2 import Matrix, matmul, batch_matmul, matmul_rows, BufferPtrFloat32
 from std.utils import StaticTuple
 
 def test_matmul_basic() raises:
@@ -343,12 +344,43 @@ def test_batch_matmul_consistency() raises:
     
     print("✓ Consistency test passed")
 
+def test_matmul_row_tiles_and_tails() raises:
+    # Exercise subranges, full row tiles, leftover rows, and SIMD column tails
+    # against a scalar reference with exactly representable binary fractions.
+    var widths: List[Int] = [1, 3, 15, 16, 17, 31, 288, 768]
+    for cols in widths:
+        var a = Matrix(cols)
+        var b = Matrix(11, cols)
+        var c = Matrix(11)
+        for j in range(cols):
+            a[j] = Float32(j % 13 - 6) * 0.125
+        for r in range(11):
+            c[r] = -999.0
+            for j in range(cols):
+                b[r, j] = Float32((r * 3 + j) % 17 - 8) * 0.0625
+        matmul_rows[1](StaticTuple[BufferPtrFloat32, 1](c.data), a.data,
+                       StaticTuple[BufferPtrFloat32, 1](b.data), 1, 8, cols)
+        for r in range(11):
+            if r >= 1 and r < 8:
+                var expected: Float32 = 0.0
+                for j in range(cols):
+                    expected += a[j] * b[r, j]
+                assert_almost_equal(c[r], expected, atol=0.00001)
+            else:
+                assert_equal(c[r], Float32(-999.0))
+        # Empty ranges must not touch the output either.
+        matmul_rows[1](StaticTuple[BufferPtrFloat32, 1](c.data), a.data,
+                       StaticTuple[BufferPtrFloat32, 1](b.data), 0, 0, cols)
+        assert_equal(c[0], Float32(-999.0))
+    print("✓ Row tiles, subranges, and column tails match scalar reference")
+
 def main() raises:
     print("=" * 60)
     print("Testing matmul and batch_matmul functions")
     print("=" * 60)
     
     # Regular matmul tests
+    test_matmul_row_tiles_and_tails()
     test_matmul_basic()
     test_matmul_all_ones()
     test_matmul_larger()
@@ -366,4 +398,3 @@ def main() raises:
     print("\n" + "=" * 60)
     print("All matmul tests passed! ✓")
     print("=" * 60)
-

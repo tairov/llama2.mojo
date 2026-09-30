@@ -461,7 +461,31 @@ def matmul_rows[
         comptime for k in range(n):
             C[k].unsafe_store(i, tmp_ptr.unsafe_load[width=nelts](k * nelts).reduce_add())
 
-    for i in range(row_start, row_end):
+    var row = row_start
+    comptime if n == 1:
+        # Reuse each input vector across four independent output rows. Keep
+        # each row's lane accumulation order unchanged; only interleave rows.
+        # Batched QKV/FFN already have independent accumulators, so avoid
+        # multiplying their register pressure with an additional row tile.
+        while row + 4 <= row_end:
+            var acc = stack_allocation[4 * nelts, Float32]()
+            comptime for r in range(4):
+                acc.unsafe_store[width=nelts](r * nelts, SIMD[DType.float32, nelts](0))
+            var first_offset = row * cols
+
+            def dot_rows[_nelts: Int](j: Int) {imm}:
+                var a = A.unsafe_load[width=_nelts](j)
+                comptime for r in range(4):
+                    var b = B[0].unsafe_load[width=_nelts](first_offset + r * cols + j)
+                    var curr = acc.unsafe_load[width=_nelts](r * nelts)
+                    acc.unsafe_store[width=_nelts](r * nelts, curr + a * b)
+
+            vectorize[nelts](cols, dot_rows)
+            comptime for r in range(4):
+                C[0].unsafe_store(row + r, acc.unsafe_load[width=nelts](r * nelts).reduce_add())
+            row += 4
+
+    for i in range(row, row_end):
         compute_row(i)
 
 @always_inline
