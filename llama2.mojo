@@ -791,7 +791,11 @@ def forward_worker(a: ForwardArgs, xbp: BufferPtrFloat32, wid: Int, sh: PoolShar
         # RoPE over this worker's heads
         for h in range(h0, h1):
             rope_head(a.q, k_ptr, freq_cis_real_row, freq_cis_imag_row, h, head_size, a.n_kv_heads)
-        barrier(sh)
+        # With ordinary multi-head attention, the same worker rotates and
+        # consumes each Q/K head. GQA can read a KV head owned by another
+        # worker, so it still needs the cross-worker synchronization.
+        if a.n_kv_heads != a.n_heads:
+            barrier(sh)
 
         # Multihead attention over this worker's heads
         for h in range(h0, h1):
