@@ -1063,42 +1063,67 @@ def main() raises:
     if prompt:
         bpe_encode(prompt_tokens, prompt, tok)
 
-    var start = UInt(0)
-    var next_token: Int
-    var token = 1
-    var pos = 0
-    while pos < steps:
-        transformer.transformer(token, pos, config, state, weights)
+    # Keep MAX's supported workers alive for the entire generation, rather
+    # than dispatching and joining the pool once per token. Worker 0 owns
+    # sampling and output; barriers publish logits and then the next token.
+    transformer._start(ForwardArgs(1, 0, config, state, weights))
+    var generation_workers = transformer.workers
 
-        if pos < len(prompt_tokens):
-            next_token = prompt_tokens[pos]
-        else:
-            if temperature == 0.0:
-                next_token = argmax(state.logits.data, config.vocab_size)
-            else:
-                for q in range(config.vocab_size):
-                    state.logits.data[unsafe_offset=q] = state.logits.data[unsafe_offset=q] / temperature
+    def generate(wid: Int) {imm}:
+        # Capture the owner, not just its raw pointer: Mojo destroys values
+        # after their last use, and the pool must outlive every worker.
+        var sh = transformer.sh
+        var start = UInt(0)
+        var pos = 0
+        while pos < steps:
+            var args = sh[].args
+            forward_worker(args, sh[].xbp.unsafe_offset(wid * args.dim), wid, sh)
+            # Sampling needs the logits written by every worker.
+            barrier(sh)
 
-                softmax(state.logits.data, config.vocab_size)
-                next_token = sample(state.logits.data, config.vocab_size)
+            if wid == 0:
+                var token = args.token
+                var next_token: Int
+                var finished = False
+                if pos < len(prompt_tokens):
+                    next_token = prompt_tokens[pos]
+                else:
+                    if temperature == 0.0:
+                        next_token = argmax(state.logits.data, config.vocab_size)
+                    else:
+                        for q in range(config.vocab_size):
+                            state.logits.data[unsafe_offset=q] = state.logits.data[unsafe_offset=q] / temperature
+                        softmax(state.logits.data, config.vocab_size)
+                        next_token = sample(state.logits.data, config.vocab_size)
+                    finished = next_token == 1 or next_token == 2
 
-            if next_token == 1 or next_token == 2:
+                if finished:
+                    # Publish EOS, without counting or printing the EOS token.
+                    sh[].args.pos = -1
+                else:
+                    var token_str = get_token_str(token, tok.vocab[next_token])
+                    print(token_str, end="")
+                    sh[].args.token = next_token
+                    sh[].args.pos = pos + 1
+                    if start == 0:
+                        start = time_in_ms()
+
+            # No worker may begin the next forward pass before token/position
+            # publication, including the EOS path (everyone must exit together).
+            barrier(sh)
+            if sh[].args.pos < 0:
                 break
+            pos = sh[].args.pos
 
-        var token_str = get_token_str(token, tok.vocab[next_token])
+        if wid == 0:
+            var end = time_in_ms()
+            var elapsed_ms = end - start
+            var achieved_tok_s = Float32(0.0)
+            if elapsed_ms > 0 and pos > 1:
+                achieved_tok_s = Float32(pos - 1) * Float32(1000.0) / Float32(elapsed_ms)
+            print("\nachieved tok/s: ", achieved_tok_s)
 
-        print(token_str, end="")
-
-        token = next_token
-        pos += 1
-
-        if start == 0:
-            start = time_in_ms()
-
-    var end = time_in_ms()
-    var elapsed_ms = end - start
-    var achieved_tok_s = Float32(0.0)
-    if elapsed_ms > 0 and pos > 1:
-        achieved_tok_s = Float32(pos - 1) * Float32(1000.0) / Float32(elapsed_ms)
-
-    print("\nachieved tok/s: ", achieved_tok_s)
+    if generation_workers == 1:
+        generate(0)
+    else:
+        parallelize(generate, generation_workers, generation_workers)
